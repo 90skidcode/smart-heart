@@ -1,0 +1,1265 @@
+{
+    "library_version": "1.0.0-draft",
+    "cases": [
+        {
+            "id": "G1",
+            "section": "Ground rules",
+            "what": "UTC 19:00 on 2 Oct is 00:30 IST on 3 Oct",
+            "expected": "2026-10-03",
+            "actual": "2026-10-03",
+            "pass": true,
+            "source": "IST date rule"
+        },
+        {
+            "id": "G2",
+            "section": "Ground rules",
+            "what": "PCI 3 Aug → screening 4 Aug is 1 day",
+            "expected": 1,
+            "actual": 1,
+            "pass": true,
+            "source": "eCRF SCR-01"
+        },
+        {
+            "id": "G3",
+            "section": "Ground rules",
+            "what": "Age of SH-0031 on screening date",
+            "expected": 55,
+            "actual": 55,
+            "pass": true,
+            "source": "eCRF SCR-01 shows 55"
+        },
+        {
+            "id": "G4",
+            "section": "Ground rules",
+            "what": "29 Feb birthday, day before 1 Mar",
+            "expected": 25,
+            "actual": 25,
+            "pass": true,
+            "source": "completed-years rule"
+        },
+        {
+            "id": "G5",
+            "section": "Ground rules",
+            "what": "29 Feb birthday reached on 1 Mar",
+            "expected": 26,
+            "actual": 26,
+            "pass": true,
+            "source": "completed-years rule"
+        },
+        {
+            "id": "G6",
+            "section": "Ground rules",
+            "what": "Day before 18th birthday",
+            "expected": 17,
+            "actual": 17,
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "G7",
+            "section": "Ground rules",
+            "what": "On 18th birthday",
+            "expected": 18,
+            "actual": 18,
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "E1",
+            "section": "Eligibility",
+            "what": "eCRF example as built (no foot-ulcer field) cannot be eligible",
+            "expected": {
+                "result": "pending",
+                "pending": [
+                    "DIABETIC_FOOT_ULCER"
+                ]
+            },
+            "actual": {
+                "result": "pending",
+                "pending": [
+                    "DIABETIC_FOOT_ULCER"
+                ]
+            },
+            "pass": true,
+            "source": "eCRF summary lists foot ulcer but form has no field"
+        },
+        {
+            "id": "E2",
+            "section": "Eligibility",
+            "what": "eCRF example with foot ulcer answered \"no\"",
+            "expected": {
+                "result": "eligible",
+                "stop_at_screen": null
+            },
+            "actual": {
+                "result": "eligible",
+                "stop_at_screen": null
+            },
+            "pass": true,
+            "source": "eCRF shows ELIGIBLE"
+        },
+        {
+            "id": "E3",
+            "section": "Eligibility",
+            "what": "LVEF 39 excludes and stops at screen 5",
+            "expected": {
+                "result": "ineligible",
+                "stop_at_screen": 5,
+                "failures": [
+                    "LVEF_GE_40"
+                ]
+            },
+            "actual": {
+                "result": "ineligible",
+                "stop_at_screen": 5,
+                "failures": [
+                    "LVEF_GE_40"
+                ]
+            },
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "E4",
+            "section": "Eligibility",
+            "what": "LVEF 40 passes",
+            "expected": "eligible",
+            "actual": "eligible",
+            "pass": true,
+            "source": "boundary (<40 excludes)"
+        },
+        {
+            "id": "E5",
+            "section": "Eligibility",
+            "what": "PCI 30 days before screening passes",
+            "expected": "eligible",
+            "actual": "eligible",
+            "pass": true,
+            "source": "boundary (≤30)"
+        },
+        {
+            "id": "E6",
+            "section": "Eligibility",
+            "what": "PCI 31 days before excludes at screen 3; later screens not evaluated",
+            "expected": [
+                3,
+                "not_evaluated"
+            ],
+            "actual": [
+                3,
+                "not_evaluated"
+            ],
+            "pass": true,
+            "source": "stop rule"
+        },
+        {
+            "id": "E7",
+            "section": "Eligibility",
+            "what": "eGFR 44 excludes",
+            "expected": "ineligible",
+            "actual": "ineligible",
+            "pass": true,
+            "source": "boundary (<45)"
+        },
+        {
+            "id": "E8",
+            "section": "Eligibility",
+            "what": "eGFR 45 passes",
+            "expected": "eligible",
+            "actual": "eligible",
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "E9",
+            "section": "Eligibility",
+            "what": "SBP 160 on treatment excludes",
+            "expected": "ineligible",
+            "actual": "ineligible",
+            "pass": true,
+            "source": "boundary (≥160)"
+        },
+        {
+            "id": "E10",
+            "section": "Eligibility",
+            "what": "BP 159\/99 passes",
+            "expected": "eligible",
+            "actual": "eligible",
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "E11",
+            "section": "Eligibility",
+            "what": "DBP 100 on treatment excludes (eCRF message checks SBP only)",
+            "expected": "ineligible",
+            "actual": "ineligible",
+            "pass": true,
+            "source": "DBP arm of rule"
+        },
+        {
+            "id": "E12",
+            "section": "Eligibility",
+            "what": "SBP 165 untreated is held for PI review",
+            "expected": "pending",
+            "actual": "pending",
+            "pass": true,
+            "source": "\"despite treatment\""
+        },
+        {
+            "id": "E13",
+            "section": "Eligibility",
+            "what": "Cardiac arrest \"unknown\" holds result",
+            "expected": "pending",
+            "actual": "pending",
+            "pass": true,
+            "source": "unknown ≠ absent"
+        },
+        {
+            "id": "E14",
+            "section": "Eligibility",
+            "what": "Non-diabetic: complications not applicable",
+            "expected": "eligible",
+            "actual": "eligible",
+            "pass": true,
+            "source": "n\/a rule"
+        },
+        {
+            "id": "E15",
+            "section": "Eligibility",
+            "what": "Age 17 excludes at screen 1",
+            "expected": 1,
+            "actual": 1,
+            "pass": true,
+            "source": "boundary"
+        },
+        {
+            "id": "B1",
+            "section": "Baseline",
+            "what": "BMI 72 kg, 165 cm",
+            "expected": 26.4,
+            "actual": 26.4,
+            "pass": true,
+            "source": "kg\/m²"
+        },
+        {
+            "id": "B2",
+            "section": "Baseline",
+            "what": "BMI 26.4 under Asian cut-offs",
+            "expected": "obese",
+            "actual": "obese",
+            "pass": true,
+            "source": "app target <25, portal target <23"
+        },
+        {
+            "id": "B3",
+            "section": "Baseline",
+            "what": "Round before classify: 66.4 kg, 170 cm → 23.0 is overweight",
+            "expected": [
+                23.0,
+                "overweight"
+            ],
+            "actual": [
+                23.0,
+                "overweight"
+            ],
+            "pass": true,
+            "source": "rounding rule"
+        },
+        {
+            "id": "B4",
+            "section": "Baseline",
+            "what": "Clinic BP mean of 138\/86 and 136\/84",
+            "expected": {
+                "sbp": 137.0,
+                "dbp": 85.0
+            },
+            "actual": {
+                "sbp": 137.0,
+                "dbp": 85.0
+            },
+            "pass": true,
+            "source": "BL-01 M4"
+        },
+        {
+            "id": "B5",
+            "section": "Baseline",
+            "what": "LDL 2.6 mmol\/L → mg\/dL",
+            "expected": 100.5,
+            "actual": 100.5,
+            "pass": true,
+            "source": "× 38.67"
+        },
+        {
+            "id": "B6",
+            "section": "Baseline",
+            "what": "HbA1c 53 mmol\/mol → %",
+            "expected": 7.0,
+            "actual": 7.0,
+            "pass": true,
+            "source": "NGSP master equation"
+        },
+        {
+            "id": "B7",
+            "section": "Baseline",
+            "what": "Creatinine 97.2 µmol\/L → mg\/dL",
+            "expected": 1.1,
+            "actual": 1.1,
+            "pass": true,
+            "source": "÷ 88.42"
+        },
+        {
+            "id": "B8",
+            "section": "Baseline",
+            "what": "Friedewald LDL from eCRF lipids (TC 184, HDL 42, TG 162)",
+            "expected": 109.6,
+            "actual": 109.6,
+            "pass": true,
+            "source": "eCRF LDL entered as 98"
+        },
+        {
+            "id": "B9",
+            "section": "Baseline",
+            "what": "Friedewald not valid at TG 400",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "method limit"
+        },
+        {
+            "id": "B10",
+            "section": "Baseline",
+            "what": "Non-HDL cholesterol",
+            "expected": 142.0,
+            "actual": 142.0,
+            "pass": true,
+            "source": "TC − HDL"
+        },
+        {
+            "id": "B11",
+            "section": "Baseline",
+            "what": "CKD-EPI 2021, male 55, creatinine 1.1 mg\/dL",
+            "expected": 79,
+            "actual": 79,
+            "pass": true,
+            "source": "eCRF eGFR entered as 68"
+        },
+        {
+            "id": "B12",
+            "section": "Baseline",
+            "what": "CKD-EPI 2021, female 55, creatinine 1.1 mg\/dL",
+            "expected": 59,
+            "actual": 59,
+            "pass": true,
+            "source": "female coefficients"
+        },
+        {
+            "id": "B13",
+            "section": "Baseline",
+            "what": "Entered 68 vs computed 79",
+            "expected": {
+                "difference_pct": 13.9,
+                "flag": false
+            },
+            "actual": {
+                "difference_pct": 13.9,
+                "flag": false
+            },
+            "pass": true,
+            "source": "15 % tolerance (PROPOSED)"
+        },
+        {
+            "id": "B14",
+            "section": "Baseline",
+            "what": "6MWT 349 \/ 350 \/ 500 \/ 501 m",
+            "expected": [
+                "poor",
+                "intermediate",
+                "intermediate",
+                "ideal"
+            ],
+            "actual": [
+                "poor",
+                "intermediate",
+                "intermediate",
+                "ideal"
+            ],
+            "pass": true,
+            "source": "portal bands"
+        },
+        {
+            "id": "B15",
+            "section": "Baseline",
+            "what": "LVEF 40 \/ 41 \/ 49 \/ 50",
+            "expected": [
+                "reduced",
+                "mildly_reduced",
+                "mildly_reduced",
+                "preserved"
+            ],
+            "actual": [
+                "reduced",
+                "mildly_reduced",
+                "mildly_reduced",
+                "preserved"
+            ],
+            "pass": true,
+            "source": "HF universal definition"
+        },
+        {
+            "id": "Q1",
+            "section": "Questionnaires",
+            "what": "PHQ-9 eCRF example total 9",
+            "expected": {
+                "total": 9,
+                "severity": "mild",
+                "item9_positive": false,
+                "clinical_review": false
+            },
+            "actual": {
+                "total": 9,
+                "severity": "mild",
+                "item9_positive": false,
+                "clinical_review": false
+            },
+            "pass": true,
+            "source": "eCRF PRO-01"
+        },
+        {
+            "id": "Q2",
+            "section": "Questionnaires",
+            "what": "PHQ-9 total 3 with item 9 = 1 still flags safety",
+            "expected": {
+                "total": 3,
+                "severity": "minimal",
+                "item9_positive": true
+            },
+            "actual": {
+                "total": 3,
+                "severity": "minimal",
+                "item9_positive": true
+            },
+            "pass": true,
+            "source": "app only notifies at ≥ 10"
+        },
+        {
+            "id": "Q3",
+            "section": "Questionnaires",
+            "what": "PHQ-9 with item 3 missing, no prorating",
+            "expected": {
+                "total": null,
+                "missing": 1,
+                "item9_positive": true
+            },
+            "actual": {
+                "total": null,
+                "missing": 1,
+                "item9_positive": true
+            },
+            "pass": true,
+            "source": "app counts missing as 0"
+        },
+        {
+            "id": "Q4",
+            "section": "Questionnaires",
+            "what": "PHQ-9 with 1 missing, prorating allowed (sum 8 of 8 items)",
+            "expected": 9,
+            "actual": 9,
+            "pass": true,
+            "source": "8 × 9 ÷ 8"
+        },
+        {
+            "id": "Q5",
+            "section": "Questionnaires",
+            "what": "PHQ-9 band edges 4\/5\/9\/10\/14\/15\/19\/20",
+            "expected": [
+                "minimal",
+                "mild",
+                "mild",
+                "moderate",
+                "moderate",
+                "moderately_severe",
+                "moderately_severe",
+                "severe"
+            ],
+            "actual": [
+                "minimal",
+                "mild",
+                "mild",
+                "moderate",
+                "moderate",
+                "moderately_severe",
+                "moderately_severe",
+                "severe"
+            ],
+            "pass": true,
+            "source": "Kroenke 2001"
+        },
+        {
+            "id": "Q6",
+            "section": "Questionnaires",
+            "what": "GAD-7 eCRF example total 10",
+            "expected": {
+                "total": 10,
+                "severity": "moderate",
+                "clinical_review": true
+            },
+            "actual": {
+                "total": 10,
+                "severity": "moderate",
+                "clinical_review": true
+            },
+            "pass": true,
+            "source": "eCRF PRO-01"
+        },
+        {
+            "id": "Q7",
+            "section": "Questionnaires",
+            "what": "GAD-7 total 15 is severe",
+            "expected": "severe",
+            "actual": "severe",
+            "pass": true,
+            "source": "Spitzer 2006"
+        },
+        {
+            "id": "Q8",
+            "section": "Questionnaires",
+            "what": "DASI all yes",
+            "expected": {
+                "score": 58.2,
+                "vo2peak": 34.6,
+                "mets": 9.9
+            },
+            "actual": {
+                "score": 58.2,
+                "vo2peak": 34.6,
+                "mets": 9.9
+            },
+            "pass": true,
+            "source": "max possible"
+        },
+        {
+            "id": "Q9",
+            "section": "Questionnaires",
+            "what": "DASI all no",
+            "expected": {
+                "score": 0.0,
+                "vo2peak": 9.6,
+                "mets": 2.7
+            },
+            "actual": {
+                "score": 0.0,
+                "vo2peak": 9.6,
+                "mets": 2.7
+            },
+            "pass": true,
+            "source": "minimum; \"≥ 1 MET\" check in SAF-01 is always true"
+        },
+        {
+            "id": "Q10",
+            "section": "Questionnaires",
+            "what": "DASI 34 (items 1–4, 7–10)",
+            "expected": {
+                "score": 34.0,
+                "vo2peak": 24.2,
+                "mets": 6.9
+            },
+            "actual": {
+                "score": 34.0,
+                "vo2peak": 24.2,
+                "mets": 6.9
+            },
+            "pass": true,
+            "source": "app labels ≥ 34 as \"> 10 METs\""
+        },
+        {
+            "id": "Q11",
+            "section": "Questionnaires",
+            "what": "DASI with one item missing",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "no prorating"
+        },
+        {
+            "id": "Q12",
+            "section": "Questionnaires",
+            "what": "EQ-5D-5L state and VAS",
+            "expected": {
+                "health_state": "21111",
+                "vas": 70,
+                "utility": null
+            },
+            "actual": {
+                "health_state": "21111",
+                "vas": 70,
+                "utility": null
+            },
+            "pass": true,
+            "source": "utility needs licensed value set"
+        },
+        {
+            "id": "Q13",
+            "section": "Questionnaires",
+            "what": "EQ-5D-5L VAS not touched stays empty",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "app pre-sets 50"
+        },
+        {
+            "id": "Q14",
+            "section": "Questionnaires",
+            "what": "BRiDgE bands at 17 \/ 18 \/ 25 \/ 26",
+            "expected": [
+                "low",
+                "moderate",
+                "moderate",
+                "high"
+            ],
+            "actual": [
+                "low",
+                "moderate",
+                "moderate",
+                "high"
+            ],
+            "pass": true,
+            "source": "app thresholds"
+        },
+        {
+            "id": "C1",
+            "section": "CCSPS",
+            "what": "Mental domain PHQ 9 + GAD 10",
+            "expected": 0,
+            "actual": 0,
+            "pass": true,
+            "source": "eCRF precedence example"
+        },
+        {
+            "id": "C2",
+            "section": "CCSPS",
+            "what": "Mental domain PHQ 4 + GAD 3",
+            "expected": 2,
+            "actual": 2,
+            "pass": true,
+            "source": "portal participant 001"
+        },
+        {
+            "id": "C3",
+            "section": "CCSPS",
+            "what": "Mental domain PHQ 11 + GAD 9",
+            "expected": 0,
+            "actual": 0,
+            "pass": true,
+            "source": "portal shows 1 for participant 014"
+        },
+        {
+            "id": "C4",
+            "section": "CCSPS",
+            "what": "Mental domain PHQ 5 + GAD 4",
+            "expected": 1,
+            "actual": 1,
+            "pass": true,
+            "source": "PROPOSED mild = 1"
+        },
+        {
+            "id": "C5",
+            "section": "CCSPS",
+            "what": "Mental domain with GAD-7 missing",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "app gives 2 once PHQ-9 is done"
+        },
+        {
+            "id": "C6",
+            "section": "CCSPS",
+            "what": "eCRF composite example (7 domains scored)",
+            "expected": {
+                "raw": 3,
+                "domains_scored": 7,
+                "normalised_complete_case": null,
+                "normalised_proportional": null
+            },
+            "actual": {
+                "raw": 3,
+                "domains_scored": 7,
+                "normalised_complete_case": null,
+                "normalised_proportional": null
+            },
+            "pass": true,
+            "source": "eCRF box shows raw 9, \"6 domains\""
+        },
+        {
+            "id": "C7",
+            "section": "CCSPS",
+            "what": "Portal participant 001 domain pips",
+            "expected": {
+                "raw": 16,
+                "normalised_complete_case": 80.0
+            },
+            "actual": {
+                "raw": 16,
+                "normalised_complete_case": 80.0
+            },
+            "pass": true,
+            "source": "portal gauge shows 68"
+        },
+        {
+            "id": "C8",
+            "section": "CCSPS",
+            "what": "Portal participant 014 domain pips",
+            "expected": 20.0,
+            "actual": 20.0,
+            "pass": true,
+            "source": "portal gauge shows 44"
+        },
+        {
+            "id": "C9",
+            "section": "CCSPS",
+            "what": "Portal participant 009 domain pips",
+            "expected": 85.0,
+            "actual": 85.0,
+            "pass": true,
+            "source": "portal gauge shows 79"
+        },
+        {
+            "id": "C10",
+            "section": "CCSPS",
+            "what": "App example with LDL missing and PHQ-9 not done",
+            "expected": {
+                "raw": 10,
+                "domains_scored": 8,
+                "normalised_proportional": 62.5
+            },
+            "actual": {
+                "raw": 10,
+                "domains_scored": 8,
+                "normalised_proportional": 62.5
+            },
+            "pass": true,
+            "source": "app scores 11 and shows 14"
+        },
+        {
+            "id": "T1",
+            "section": "Time anchors",
+            "what": "Rehab phase on days 7 \/ 8 \/ 30 \/ 31 \/ 90 \/ 91",
+            "expected": [
+                1,
+                2,
+                2,
+                3,
+                3,
+                4
+            ],
+            "actual": [
+                1,
+                2,
+                2,
+                3,
+                3,
+                4
+            ],
+            "pass": true,
+            "source": "PROPOSED boundaries"
+        },
+        {
+            "id": "T2",
+            "section": "Time anchors",
+            "what": "Portal examples: day 47 \/ 21 \/ 96",
+            "expected": [
+                3,
+                2,
+                4
+            ],
+            "actual": [
+                3,
+                2,
+                4
+            ],
+            "pass": true,
+            "source": "portal shows III \/ II \/ IV"
+        },
+        {
+            "id": "T3",
+            "section": "Time anchors",
+            "what": "Day 30 visit window (−5 \/ +5) from randomisation 4 Aug",
+            "expected": {
+                "target": "2026-09-03",
+                "start": "2026-08-29",
+                "end": "2026-09-08"
+            },
+            "actual": {
+                "target": "2026-09-03",
+                "start": "2026-08-29",
+                "end": "2026-09-08"
+            },
+            "pass": true,
+            "source": "visit schedule"
+        },
+        {
+            "id": "T4",
+            "section": "Time anchors",
+            "what": "Visit status before \/ inside \/ after window",
+            "expected": [
+                "scheduled",
+                "open",
+                "missed"
+            ],
+            "actual": [
+                "scheduled",
+                "open",
+                "missed"
+            ],
+            "pass": true,
+            "source": "window rule"
+        },
+        {
+            "id": "X1",
+            "section": "Exercise",
+            "what": "THR age 55, RHR 70, NYHA I, phase 2",
+            "expected": {
+                "low": 113,
+                "high": 121
+            },
+            "actual": {
+                "low": 113,
+                "high": 121
+            },
+            "pass": true,
+            "source": "app calcTHR gives the same; Exercise tab shows 93–102"
+        },
+        {
+            "id": "X2",
+            "section": "Exercise",
+            "what": "THR age 55, measured RHR 74",
+            "expected": {
+                "low": 115,
+                "high": 123
+            },
+            "actual": {
+                "low": 115,
+                "high": 123
+            },
+            "pass": true,
+            "source": "measured RHR instead of fixed 70"
+        },
+        {
+            "id": "X3",
+            "section": "Exercise",
+            "what": "Portal participant 001 (58 y, RHR 68, NYHA I, phase 3)",
+            "expected": {
+                "low": 124,
+                "high": 133
+            },
+            "actual": {
+                "low": 124,
+                "high": 133
+            },
+            "pass": true,
+            "source": "portal zone 95–115"
+        },
+        {
+            "id": "X4",
+            "section": "Exercise",
+            "what": "Portal participant 009 (52 y, RHR 64, NYHA I, phase 4)",
+            "expected": {
+                "low": 147,
+                "high": 157
+            },
+            "actual": {
+                "low": 147,
+                "high": 157
+            },
+            "pass": true,
+            "source": "portal zone 105–125"
+        },
+        {
+            "id": "X5",
+            "section": "Exercise",
+            "what": "Portal participant 014 (RHR 104) gets no zone",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "Karvonen would give 122–125"
+        },
+        {
+            "id": "X6",
+            "section": "Exercise",
+            "what": "Phase I gets no zone",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "app falls back to 45–54 %"
+        },
+        {
+            "id": "X7",
+            "section": "Exercise",
+            "what": "NYHA IV gets no zone",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "rest \/ ADL only"
+        },
+        {
+            "id": "X8",
+            "section": "Exercise",
+            "what": "Missing RHR gets no zone",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "app assumes 70"
+        },
+        {
+            "id": "X9",
+            "section": "Exercise",
+            "what": "HRmax 220 − age vs Gellish at 55",
+            "expected": [
+                165,
+                169
+            ],
+            "actual": [
+                165,
+                169
+            ],
+            "pass": true,
+            "source": "207 − 0.7 × age"
+        },
+        {
+            "id": "X10",
+            "section": "Exercise",
+            "what": "Time in zone: 24 of 30 minutes",
+            "expected": 80,
+            "actual": 80,
+            "pass": true,
+            "source": "1-minute samples"
+        },
+        {
+            "id": "X11",
+            "section": "Exercise",
+            "what": "Time in zone with HR on only 10 of 30 minutes",
+            "expected": null,
+            "actual": null,
+            "pass": true,
+            "source": "insufficient data"
+        },
+        {
+            "id": "X12",
+            "section": "Exercise",
+            "what": "Session avg HR 112 vs zone 85–100",
+            "expected": "above_zone",
+            "actual": "above_zone",
+            "pass": true,
+            "source": "portal participant 014"
+        },
+        {
+            "id": "M1",
+            "section": "Monitoring",
+            "what": "Step decline for participant 014 (14 days)",
+            "expected": 45.2,
+            "actual": 45.2,
+            "pass": true,
+            "source": "portal alert says 54 %"
+        },
+        {
+            "id": "M2",
+            "section": "Monitoring",
+            "what": "Steps mean over valid days only (≥ 600 min wear, ≥ 4 days)",
+            "expected": 6575.0,
+            "actual": 6575.0,
+            "pass": true,
+            "source": "low-wear day excluded"
+        },
+        {
+            "id": "M3",
+            "section": "Monitoring",
+            "what": "Home BP needs ≥ 6 readings",
+            "expected": [
+                null,
+                {
+                    "sbp": 130.0,
+                    "dbp": 82.0,
+                    "n": 6
+                }
+            ],
+            "actual": [
+                null,
+                {
+                    "sbp": 130.0,
+                    "dbp": 82.0,
+                    "n": 6
+                }
+            ],
+            "pass": true,
+            "source": "PROPOSED minimum"
+        },
+        {
+            "id": "M4",
+            "section": "Monitoring",
+            "what": "RHR > 100 on last 3 days (participant 014)",
+            "expected": true,
+            "actual": true,
+            "pass": true,
+            "source": "portal alert"
+        },
+        {
+            "id": "M5",
+            "section": "Monitoring",
+            "what": "RHR not sustained when one day is 99",
+            "expected": false,
+            "actual": false,
+            "pass": true,
+            "source": "rule"
+        },
+        {
+            "id": "M6",
+            "section": "Monitoring",
+            "what": "Weight +2.2 kg in 2 days flags",
+            "expected": true,
+            "actual": true,
+            "pass": true,
+            "source": "PROPOSED HF rule"
+        },
+        {
+            "id": "M7",
+            "section": "Monitoring",
+            "what": "Participant 014 weight 87.1 → 88.4 over 7 days",
+            "expected": false,
+            "actual": false,
+            "pass": true,
+            "source": "PROPOSED HF rule"
+        },
+        {
+            "id": "M8",
+            "section": "Monitoring",
+            "what": "Prototype trend: SpO₂ 96 → 97 counts as improving",
+            "expected": "improving",
+            "actual": "improving",
+            "pass": true,
+            "source": "first vs last value"
+        },
+        {
+            "id": "M9",
+            "section": "Monitoring",
+            "what": "Proposed trend: weight, 3-day means, 1 kg minimum",
+            "expected": "improving",
+            "actual": "improving",
+            "pass": true,
+            "source": "participant 001"
+        },
+        {
+            "id": "M10",
+            "section": "Monitoring",
+            "what": "Sleep bands 5.9 \/ 6.0 \/ 7.0 h",
+            "expected": [
+                "poor",
+                "short",
+                "ideal"
+            ],
+            "actual": [
+                "poor",
+                "short",
+                "ideal"
+            ],
+            "pass": true,
+            "source": "eCRF scores 6.0 h as 0"
+        },
+        {
+            "id": "M11",
+            "section": "Monitoring",
+            "what": "Steps status 2400\/6000, 6200\/7000, 8400\/8000",
+            "expected": [
+                "low",
+                "below_goal",
+                "on_target"
+            ],
+            "actual": [
+                "low",
+                "below_goal",
+                "on_target"
+            ],
+            "pass": true,
+            "source": "portal rule"
+        },
+        {
+            "id": "A1",
+            "section": "Adherence",
+            "what": "App meds today: 2 taken of 5 scheduled",
+            "expected": 40,
+            "actual": 40,
+            "pass": true,
+            "source": "composite note says 3\/4"
+        },
+        {
+            "id": "A2",
+            "section": "Adherence",
+            "what": "At 9 AM only morning doses are due: 2 of 3",
+            "expected": 67,
+            "actual": 67,
+            "pass": true,
+            "source": "due-so-far rule"
+        },
+        {
+            "id": "A3",
+            "section": "Adherence",
+            "what": "DAPT below target (aspirin 70, clopidogrel 58)",
+            "expected": true,
+            "actual": true,
+            "pass": true,
+            "source": "portal participant 014"
+        },
+        {
+            "id": "A4",
+            "section": "Adherence",
+            "what": "DAPT at 70 and 71 is not below target",
+            "expected": false,
+            "actual": false,
+            "pass": true,
+            "source": "< 70 rule"
+        },
+        {
+            "id": "A5",
+            "section": "Adherence",
+            "what": "DHI meter 001 \/ 014 \/ 009",
+            "expected": [
+                88,
+                61,
+                93
+            ],
+            "actual": [
+                88,
+                61,
+                93
+            ],
+            "pass": true,
+            "source": "portal shows 88 \/ 61 \/ 94"
+        },
+        {
+            "id": "A6",
+            "section": "Adherence",
+            "what": "Education completion 14 of 22 modules",
+            "expected": 64,
+            "actual": 64,
+            "pass": true,
+            "source": "portal sub-domain shows 71"
+        },
+        {
+            "id": "A7",
+            "section": "Adherence",
+            "what": "8 glasses × 250 mL against a 1.5 L target and a 1.5 L limit",
+            "expected": [
+                true,
+                false
+            ],
+            "actual": [
+                true,
+                false
+            ],
+            "pass": true,
+            "source": "HF needs a limit"
+        },
+        {
+            "id": "A8",
+            "section": "Adherence",
+            "what": "5 g salt in sodium",
+            "expected": 1.97,
+            "actual": 1.97,
+            "pass": true,
+            "source": "÷ 2.54"
+        },
+        {
+            "id": "L1",
+            "section": "Alerts",
+            "what": "Symptom cluster for participant 014",
+            "expected": {
+                "days_flagged": 7,
+                "window": 7,
+                "fires": true
+            },
+            "actual": {
+                "days_flagged": 7,
+                "window": 7,
+                "fires": true
+            },
+            "pass": true,
+            "source": "portal fires"
+        },
+        {
+            "id": "L2",
+            "section": "Alerts",
+            "what": "Severe chest pain alone never fires the cluster rule",
+            "expected": false,
+            "actual": false,
+            "pass": true,
+            "source": "safety gap"
+        },
+        {
+            "id": "L3",
+            "section": "Alerts",
+            "what": "Single-day red flag: chest pain 2 \/ fatigue 2 \/ breathlessness 3",
+            "expected": [
+                true,
+                false,
+                true
+            ],
+            "actual": [
+                true,
+                false,
+                true
+            ],
+            "pass": true,
+            "source": "PROPOSED rule"
+        },
+        {
+            "id": "R1",
+            "section": "Randomisation",
+            "what": "Age stratum at 59 and 60",
+            "expected": [
+                "lt60",
+                "ge60"
+            ],
+            "actual": [
+                "lt60",
+                "ge60"
+            ],
+            "pass": true,
+            "source": "eCRF RAND-01"
+        },
+        {
+            "id": "R2",
+            "section": "Randomisation",
+            "what": "Sequence import check finds an unbalanced block",
+            "expected": {
+                "blocks": 2,
+                "unbalanced": [
+                    "lt60#2"
+                ]
+            },
+            "actual": {
+                "blocks": 2,
+                "unbalanced": [
+                    "lt60#2"
+                ]
+            },
+            "pass": true,
+            "source": "import validation"
+        },
+        {
+            "id": "R3",
+            "section": "Randomisation",
+            "what": "Signed change for display",
+            "expected": [
+                "+6",
+                "−6",
+                "0"
+            ],
+            "actual": [
+                "+6",
+                "−6",
+                "0"
+            ],
+            "pass": true,
+            "source": "portal prints ▲ for negative changes"
+        }
+    ]
+}

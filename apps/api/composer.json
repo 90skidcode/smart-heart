@@ -1,0 +1,39 @@
+{
+    "name": "smart-heart/api",
+    "description": "SMART-HEART / Smart Heart Idhayam REST API (core PHP + MySQL)",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.5",
+        "ext-json": "*",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*"
+    },
+    "autoload": {
+        "psr-4": { "SmartHeart\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "SmartHeart\\Tests\\": "tests/" }
+    },
+    "scripts": {
+        "serve": ["Composer\\Config::disableProcessTimeout", "php -S localhost:8080 public/index.php"],
+        "migrate": "@php bin/migrate.php",
+        "test": ["@test:unit", "@test:vectors", "@test:case-number", "@test:crosscheck"],
+        "test:unit": "phpunit --testsuite unit",
+        "test:vectors": "@php tests/scripts/calc_vectors.php",
+        "test:case-number": "@php tests/scripts/case_number.php",
+        "test:crosscheck": "node --experimental-strip-types ../../packages/contracts/case-number/crosscheck.ts",
+        "test:db": [
+            "@putenv DB_NAME=smart_heart_test",
+            "phpunit --testsuite integration",
+            "@php bin/migrate.php --fresh",
+            "@php tests/scripts/case_number_lifecycle.php"
+        ]
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^13.4"
+    }
+}

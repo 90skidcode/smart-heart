@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.vscode/
+
+# API
+apps/api/vendor/
+apps/api/.env
+apps/api/.phpunit.cache/
+
+# Regenerated with random numbers on every test run
+packages/contracts/case-number/case_number_vectors.json
+
+node_modules/

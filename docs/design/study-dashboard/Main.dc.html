@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Study dashboard · SMART-HEART</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&amp;family=DM+Serif+Display&amp;family=JetBrains+Mono:wght@400;500&amp;family=Noto+Sans+Tamil:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#0B1A2E}a:hover{color:#A80E27}
+button,input,select,textarea{font-family:inherit}
+:focus-visible{outline:2px solid #C8102E;outline-offset:2px}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: #F5F6F8; color: #0B1A2E; font-family: 'DM Sans', 'Noto Sans Tamil', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5">
+
+<nav aria-label="Main" style="flex: 1 1 248px; box-sizing: border-box; background: #0A1628; color: #C9D2E0; padding: 20px 14px 18px; display: flex; flex-direction: column; gap: 22px">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: #FFFFFF; text-decoration: none">
+<svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-8.5-5.2-8.5-11.4C3.5 6.5 5.8 4 8.6 4c1.5 0 2.7.7 3.4 1.9C12.7 4.7 13.9 4 15.4 4c2.8 0 5.1 2.5 5.1 5.6C20.5 15.8 12 21 12 21z" fill="#C8102E"></path><polyline points="6.2,11.6 9,11.6 10.2,9.2 12,14.2 13.4,10.6 14.4,11.6 17.8,11.6" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></polyline></svg>
+<span style="display: flex; flex-direction: column; line-height: 1.2"><span style="font-weight: 700; font-size: 15px; letter-spacing: 0.06em">SMART-HEART</span><span style="font-size: 12px; color: #8C99AD">Study console · இதயம்</span></span>
+</a>
+<sc-for list="{{ nav }}" as="sec" hint-placeholder-count="4">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div style="padding: 0 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #8C99AD">{{ sec.title }}</div>
+<sc-for list="{{ sec.items }}" as="it" hint-placeholder-count="3">
+<a href="{{ it.href }}" aria-current="{{ it.current }}" style="display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 10px; border-radius: 8px; text-decoration: none; font-weight: 500; color: {{ it.fg }}; background: {{ it.bg }}">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{ it.ic }}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ it.d }}"></path></svg>
+<span style="flex: 1">{{ it.label }}</span>
+<sc-if value="{{ it.hasBadge }}" hint-placeholder-val="{{ false }}"><span style="min-width: 22px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; background: #C8102E; color: #FFFFFF; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center">{{ it.badge }}</span></sc-if>
+</a>
+</sc-for>
+</div>
+</sc-for>
+<div style="margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 14px 10px 0; border-top: 1px solid #1E3A6E">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 50%; background: #1E3A6E; color: #FFFFFF; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; justify-content: center">BC</span>
+<span style="display: flex; flex-direction: column; line-height: 1.3; min-width: 0"><span style="color: #FFFFFF; font-weight: 600">Dr Bindu Charles</span><span style="font-size: 12px; color: #8C99AD">Principal Investigator · SRMC, Chennai</span></span>
+</div>
+</nav>
+
+<main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 12px clamp(16px, 3vw, 32px); background: #FFFFFF; border-bottom: 1px solid #E2E6EC">
+<nav aria-label="Breadcrumb" style="flex: 1 1 220px; min-width: 0">
+<ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: #5B6779">
+<li><a href="Main.dc.html" style="color: #5B6779; text-decoration: none">Study</a></li>
+<li aria-hidden="true">/</li>
+<li aria-current="page" style="color: #0B1A2E; font-weight: 600">Dashboard</li>
+</ol>
+</nav>
+<div role="search" style="flex: 1 1 260px; max-width: 420px; position: relative">
+<label for="global-search" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Search study ID, name or phone</label>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6779" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="position: absolute; left: 13px; top: 13px"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M20 20l-4-4"></path></svg>
+<input id="global-search" type="search" placeholder="Search study ID, name or phone" style="width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px 0 40px; border: 1px solid #CBD2DC; border-radius: 10px; background: #F5F6F8; color: #0B1A2E; font-size: 14px">
+</div>
+<span style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 999px; background: #FFF3DF; color: #8A5200; font-size: 12px; font-weight: 600; white-space: nowrap">Sample data</span>
+<a href="Patient.dc.html" aria-label="Notifications: 6 open alerts" style="position: relative; width: 44px; height: 44px; flex: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #E2E6EC; border-radius: 10px; color: #0B1A2E">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.5 2h-15l1.5-2z M10 20.5a2 2 0 0 0 4 0"></path></svg>
+<span aria-hidden="true" style="position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: #C8102E; color: #FFFFFF; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center">6</span>
+</a>
+</header>
+
+<div style="width: 100%; max-width: 1280px; margin: 0 auto; padding: 28px clamp(16px, 3vw, 32px) 56px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 24px">
+<div style="display: flex; flex-direction: column; gap: 6px; min-width: 0">
+<p style="margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #A80E27">eCRF · Sri Ramachandra Medical Centre</p>
+<h1 style="margin: 0; font-family: 'DM Serif Display', Georgia, serif; font-weight: 400; font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -0.01em">Study dashboard</h1>
+<p style="margin: 0; color: #3D4A5C">Saturday 3 October 2026 · 58 registered · target 240 randomised, 120 per arm</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 10px">
+<button type="button" style="height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid #CBD2DC; background: #FFFFFF; color: #0B1A2E; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v11.5 M7.5 10.5L12 15l4.5-4.5 M4.5 19.5h15"></path></svg>
+Export snapshot
+</button>
+<button type="button" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid #C8102E; background: #C8102E; color: #FFFFFF; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14 M5 12h14"></path></svg>
+Register participant
+</button>
+</div>
+</div>
+
+<section aria-label="Recruitment summary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 16px">
+<div style="background: #FFFFFF; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 18px 18px 16px; box-sizing: border-box; min-height: 140px; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #3D4A5C"><span style="width: 8px; height: 8px; border-radius: 2px; background: #1E3A6E"></span>In screening</div>
+<div style="font-family: 'DM Serif Display', Georgia, serif; font-size: 44px; line-height: 1">3</div>
+<div style="font-size: 13px; color: #5B6779">Awaiting an eligibility decision</div>
+</div>
+<div style="background: #FFFFFF; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 18px 18px 16px; box-sizing: border-box; min-height: 140px; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #3D4A5C"><span style="width: 8px; height: 8px; border-radius: 2px; background: #5677A8"></span>In baseline</div>
+<div style="font-family: 'DM Serif Display', Georgia, serif; font-size: 44px; line-height: 1">4</div>
+<div style="font-size: 13px; color: #5B6779">Eligible · 11 modules to complete</div>
+</div>
+<div style="background: #FFFFFF; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 18px 18px 16px; box-sizing: border-box; min-height: 140px; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #3D4A5C"><span style="width: 8px; height: 8px; border-radius: 2px; background: #E08A00"></span>Ready to randomise</div>
+<div style="font-family: 'DM Serif Display', Georgia, serif; font-size: 44px; line-height: 1">2</div>
+<div style="font-size: 13px; color: #5B6779">Baseline complete</div>
+</div>
+<div style="background: #FFFFFF; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 18px 18px 16px; box-sizing: border-box; min-height: 140px; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #3D4A5C"><span style="width: 8px; height: 8px; border-radius: 2px; background: #00A391"></span>Randomised</div>
+<div style="display: flex; align-items: baseline; gap: 6px"><span style="font-family: 'DM Serif Display', Georgia, serif; font-size: 44px; line-height: 1">34</span><span style="font-size: 14px; color: #5B6779">of 240</span></div>
+<div style="height: 6px; border-radius: 3px; background: #EEF1F5; overflow: hidden" role="img" aria-label="14.2% of the randomisation target"><div style="width: 14.2%; height: 100%; background: #00A391"></div></div>
+<div style="font-size: 13px; color: #5B6779">17 intervention · 17 control</div>
+</div>
+<div style="background: #FFFFFF; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 18px 18px 16px; box-sizing: border-box; min-height: 140px; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #3D4A5C"><span style="width: 8px; height: 8px; border-radius: 2px; background: #8C99AD"></span>Screen failures</div>
+<div style="font-family: 'DM Serif Display', Georgia, serif; font-size: 44px; line-height: 1">15</div>
+<div style="font-size: 13px; color: #5B6779">26% of registered · reason recorded</div>
+</div>
+</section>
+
+<section aria-labelledby="pipeline-h" style="background: #FFFFFF; border: 1px solid #E2E6EC; border-radius: 14px; padding: 20px 22px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px">
+<h2 id="pipeline-h" style="margin: 0; font-size: 16px; font-weight: 600">Where registered participants are now</h2>
+<span style="font-size: 13px; color: #5B6779">58 registered since 14 Jul 2026</span>
+</div>
+<div role="img" aria-label="Screening 3, in baseline 4, ready to randomise 2, randomised 34, screen failed 15" style="display: flex; gap: 3px; height: 14px">
+<div style="flex: 3 1 0px; background: #1E3A6E; border-radius: 7px 0 0 7px"></div>
+<div style="flex: 4 1 0px; background: #5677A8"></div>
+<div style="flex: 2 1 0px; background: #E08A00"></div>
+<div style="flex: 34 1 0px; background: #00A391"></div>
+<div style="flex: 15 1 0px; background: #CBD2DC; border-radius: 0 7px 7px 0"></div>
+</div>
+<ul style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px 20px; font-size: 13px">
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 2px; background: #1E3A6E; flex: none"></span><span style="color: #3D4A5C">Screening</span><span style="margin-left: auto; font-weight: 600">3 · 5%</span></li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 2px; background: #5677A8; flex: none"></span><span style="color: #3D4A5C">In baseline</span><span style="margin-left: auto; font-weight: 600">4 · 7%</span></li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 2px; background: #E08A00; flex: none"></span><span style="color: #3D4A5C">Ready</span><span style="margin-left: auto; font-weight: 600">2 · 3%</span></li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 2px; background: #00A391; flex: none"></span><span style="color: #3D4A5C">Randomised</span><span style="margin-left: auto; font-weight: 600">34 · 59%</span></li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 2px; background: #CBD2DC; flex: none"></span><span style="color: #3D4A5C">Screen failed</span><span style="margin-left: auto; font-weight: 600">15 · 26%</span></li>
+</ul>
+</section>
+
+<section aria-labelledby="participants-h" style="background: #FFFFFF; border: 1px solid #E2E6EC; border-radius: 14px; overflow: hidden">
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 18px 22px 14px">
+<h2 id="participants-h" style="margin: 0; font-size: 16px; font-weight: 600">Participants</h2>
+<div role="group" aria-label="Filter by status" style="display: flex; flex-wrap: wrap; gap: 8px">
+<sc-for list="{{ chips }}" as="c" hint-placeholder-count="6">
+<button type="button" aria-pressed="{{ c.pressed }}" onClick="{{ c.pick }}" style="height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid {{ c.bd }}; background: {{ c.bg }}; color: {{ c.fg }}; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer">{{ c.label }}<span style="font-weight: 500; color: {{ c.nfg }}">{{ c.n }}</span></button>
+</sc-for>
+</div>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; min-width: 820px; border-collapse: collapse; font-size: 14px">
+<thead>
+<tr>
+<th scope="col" style="text-align: left; padding: 10px 22px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779">Study ID</th>
+<th scope="col" style="text-align: left; padding: 10px 16px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779">Participant</th>
+<th scope="col" style="text-align: left; padding: 10px 16px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779">Status</th>
+<th scope="col" style="text-align: left; padding: 10px 16px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779">Progress</th>
+<th scope="col" style="text-align: left; padding: 10px 16px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779">Registered</th>
+<th scope="col" style="text-align: right; padding: 10px 22px; background: #F5F6F8; border-top: 1px solid #E2E6EC; border-bottom: 1px solid #E2E6EC; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6779"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Action</span></th>
+</tr>
+</thead>
+<tbody>
+<tr hidden="{{ hide.r1 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0058</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Rajan Pillai</div><div style="font-size: 13px; color: #5B6779">55 · Male</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #E8EEF7; color: #1E3A6E; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #1E3A6E"></span>Screening</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">14 of 15 checks answered</div><div style="margin-top: 6px; width: 160px; height: 4px; border-radius: 2px; background: #EEF1F5; overflow: hidden"><div style="width: 93%; height: 100%; background: #1E3A6E"></div></div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">2 Oct 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="Screening.dc.html" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; background: #0B1A2E; color: #FFFFFF; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">Continue screening<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+<tr hidden="{{ hide.r2 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0057</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Anand Kumar</div><div style="font-size: 13px; color: #5B6779">47 · Male</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #E8EEF7; color: #1E3A6E; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #1E3A6E"></span>Screening</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">6 of 15 checks answered</div><div style="margin-top: 6px; width: 160px; height: 4px; border-radius: 2px; background: #EEF1F5; overflow: hidden"><div style="width: 40%; height: 100%; background: #1E3A6E"></div></div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">1 Oct 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="Screening.dc.html" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #CBD2DC; color: #0B1A2E; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">Continue screening<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+<tr hidden="{{ hide.r3 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0056</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Priya Subramaniam</div><div style="font-size: 13px; color: #5B6779">52 · Female</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #EEF1F5; color: #3D4A5C; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #5677A8"></span>In baseline</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">7 of 11 modules · Lifestyle in progress</div><div style="margin-top: 6px; width: 160px; height: 4px; border-radius: 2px; background: #EEF1F5; overflow: hidden"><div style="width: 64%; height: 100%; background: #5677A8"></div></div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">29 Sep 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="#" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #CBD2DC; color: #0B1A2E; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">Resume baseline<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+<tr hidden="{{ hide.r4 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0054</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Kavitha Rao</div><div style="font-size: 13px; color: #5B6779">61 · Female</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #FFF3DF; color: #8A5200; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #E08A00"></span>Ready</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">11 of 11 modules · 6 days since PCI</div><div style="margin-top: 6px; width: 160px; height: 4px; border-radius: 2px; background: #EEF1F5; overflow: hidden"><div style="width: 100%; height: 100%; background: #E08A00"></div></div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">28 Sep 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="#" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #CBD2DC; color: #0B1A2E; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">Randomise<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+<tr hidden="{{ hide.r5 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0052</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Murugan Selvam</div><div style="font-size: 13px; color: #5B6779">58 · Male</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #E3F4F2; color: #00695F; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #00A391"></span>Randomised</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">Study day 11 · D14 window opens 4 Oct</div><div style="margin-top: 6px; width: 160px; height: 4px; border-radius: 2px; background: #EEF1F5; overflow: hidden"><div style="width: 12%; height: 100%; background: #00A391"></div></div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">18 Sep 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="#" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #CBD2DC; color: #0B1A2E; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">Open record<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+<tr hidden="{{ hide.r6 }}">
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; white-space: nowrap">SMART-HEART-0047</td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-weight: 600">Lakshmi Devi</div><div style="font-size: 13px; color: #5B6779">66 · Female</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; background: #FCEBEE; color: #A80E27; font-size: 12px; font-weight: 600; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: #C8102E"></span>Screen failed</span></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5"><div style="font-size: 13px; color: #3D4A5C">Stopped at screen 5 · LVEF 35%, below 40%</div></td>
+<td style="padding: 12px 16px; border-bottom: 1px solid #EEF1F5; color: #3D4A5C; white-space: nowrap">12 Sep 2026</td>
+<td style="padding: 12px 22px; border-bottom: 1px solid #EEF1F5; text-align: right"><a href="#" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; box-sizing: border-box; border-radius: 10px; border: 1px solid #CBD2DC; color: #0B1A2E; text-decoration: none; font-weight: 600; font-size: 13px; white-space: nowrap">View record<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 14px 22px; font-size: 13px; color: #5B6779">
+<span>{{ shownLabel }}</span>
+<a href="#" style="font-weight: 600; color: #0B1A2E">View all participants</a>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 24px; align-items: start">
+
+<section aria-labelledby="attention-h" style="background: #FFFFFF; border: 1px solid #E2E6EC; border-radius: 14px; padding: 20px 22px 10px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px">
+<h2 id="attention-h" style="margin: 0; font-size: 16px; font-weight: 600">Needs your attention</h2>
+<span style="font-size: 13px; color: #5B6779">4 tasks</span>
+</div>
+<ul style="list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column">
+<li style="border-top: 1px solid #EEF1F5"><a href="Screening.dc.html" style="display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 10px 0; text-decoration: none; color: #0B1A2E">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 10px; background: #FFF3DF; color: #8A5200; display: inline-flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.5h6v3H9z M7.5 5H5v15.5h14V5h-2.5 M8.5 13.5l2.5 2.5 4.5-5"></path></svg></span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-weight: 600">Answer 1 screening question</span><span style="font-size: 13px; color: #5B6779">SMART-HEART-0058 · diabetic foot ulcer is unanswered</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6779" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a></li>
+<li style="border-top: 1px solid #EEF1F5"><a href="#" style="display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 10px 0; text-decoration: none; color: #0B1A2E">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 10px; background: #E8EEF7; color: #1E3A6E; display: inline-flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8 12 3.5z M3.5 12.5l8.5 4.5 8.5-4.5 M3.5 16.5l8.5 4.5 8.5-4.5"></path></svg></span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-weight: 600">Resume baseline</span><span style="font-size: 13px; color: #5B6779">SMART-HEART-0056 · 7 of 11 modules, Lifestyle in progress</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6779" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a></li>
+<li style="border-top: 1px solid #EEF1F5"><a href="#" style="display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 10px 0; text-decoration: none; color: #0B1A2E">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 10px; background: #E3F4F2; color: #00695F; display: inline-flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16V20H4z M4 9.5h16 M8 3v4.5 M16 3v4.5"></path></svg></span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-weight: 600">D14 check opens tomorrow</span><span style="font-size: 13px; color: #5B6779">SMART-HEART-0052 · window 4–9 October</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6779" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a></li>
+<li style="border-top: 1px solid #EEF1F5"><a href="Rules.dc.html" style="display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 10px 0; text-decoration: none; color: #0B1A2E">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 10px; background: #FCEBEE; color: #A80E27; display: inline-flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h9 M17 6.5h3 M13 4.5v4 M4 12h3 M11 12h9 M7 10v4 M4 17.5h11 M19 17.5h1 M15 15.5v4"></path></svg></span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-weight: 600">Approve scoring rules</span><span style="font-size: 13px; color: #5B6779">9 engines in draft · 1 ready for your signature</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6779" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a></li>
+</ul>
+</section>
+
+<section aria-labelledby="alerts-h" style="background: #0A1628; color: #C9D2E0; clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px); padding: 22px 22px 20px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px">
+<h2 id="alerts-h" style="margin: 0; font-size: 16px; font-weight: 600; color: #FFFFFF">Monitoring alerts</h2>
+<span style="font-size: 13px; color: #8C99AD">6 open · all for SHI-2026-014</span>
+</div>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+<li style="display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: rgba(255,255,255,0.05)">
+<span style="flex: none; height: 22px; padding: 0 8px; border-radius: 6px; background: #C8102E; color: #FFFFFF; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; display: inline-flex; align-items: center">Critical</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="color: #FFFFFF; font-weight: 600">Home BP 168/96 mmHg</span><span style="font-size: 13px; color: #8C99AD">Systolic above 160 · today 07:40</span></span>
+</li>
+<li style="display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: rgba(255,255,255,0.05)">
+<span style="flex: none; height: 22px; padding: 0 8px; border-radius: 6px; background: #C8102E; color: #FFFFFF; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; display: inline-flex; align-items: center">Critical</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="color: #FFFFFF; font-weight: 600">Resting HR above 100 for 3 days</span><span style="font-size: 13px; color: #8C99AD">101, 103 and 104 bpm · 30 Sep – 2 Oct</span></span>
+</li>
+<li style="display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: rgba(255,255,255,0.05)">
+<span style="flex: none; height: 22px; padding: 0 8px; border-radius: 6px; background: #C8102E; color: #FFFFFF; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; display: inline-flex; align-items: center">Critical</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="color: #FFFFFF; font-weight: 600">Clopidogrel adherence 58%</span><span style="font-size: 13px; color: #8C99AD">A DAPT drug below 70% over 7 days</span></span>
+</li>
+</ul>
+<p style="margin: 0; font-size: 13px; color: #8C99AD">3 more: symptom red flag and symptom cluster (critical), exercise effort above target (warning)</p>
+<a href="Patient.dc.html" style="align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; box-sizing: border-box; border-radius: 10px; background: #FFFFFF; color: #0A1628; text-decoration: none; font-weight: 600">Open SHI-2026-014<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+</section>
+
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1720}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all' };
+  }
+
+  nav(active) {
+    const I = {
+      dashboard: 'M4 4h7v7H4z M13 4h7v4h-7z M13 10h7v10h-7z M4 13h7v7H4z',
+      participants: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M2.5 20c.7-3.4 3.3-5.5 6.5-5.5s5.8 2.1 6.5 5.5 M16 4.3a3.5 3.5 0 0 1 0 6.4 M18 14.8c1.9.6 3.1 2.4 3.5 5.2',
+      screening: 'M9 3.5h6v3H9z M7.5 5H5v15.5h14V5h-2.5 M8.5 13.5l2.5 2.5 4.5-5',
+      baseline: 'M12 3.5l8.5 4.5-8.5 4.5L3.5 8 12 3.5z M3.5 12.5l8.5 4.5 8.5-4.5 M3.5 16.5l8.5 4.5 8.5-4.5',
+      randomise: 'M3 7h3.5c4.5 0 6.5 10 11 10H21 M3 17h3.5c1.4 0 2.6-1 3.6-2.5 M13.9 9.5c1-1.5 2.2-2.5 3.6-2.5H21 M18.5 4.5L21 7l-2.5 2.5 M18.5 14.5L21 17l-2.5 2.5',
+      monitoring: 'M3 12h4l2.5-6.5 4 13 2.5-6.5H21',
+      alerts: 'M6 16.5V11a6 6 0 1 1 12 0v5.5l1.5 2h-15l1.5-2z M10 20.5a2 2 0 0 0 4 0',
+      careplans: 'M12 20.5s-8-4.8-8-10.6A4.4 4.4 0 0 1 12 7.4a4.4 4.4 0 0 1 8 2.5c0 5.8-8 10.6-8 10.6z M7 12.5h2.5l1.3-2.2 2.2 4.2 1.3-2H17',
+      queries: 'M4 4.5h16v11.5H9.5L4 20.5v-16z M9.8 8.8a2.2 2.2 0 1 1 3 2c-.5.2-.8.6-.8 1.1v.4 M12 14.6v.1',
+      audit: 'M4 12a8 8 0 1 0 2.4-5.7 M4 3.5v4h4 M12 7.5V12l3 2',
+      exports: 'M12 3.5v11.5 M7.5 10.5L12 15l4.5-4.5 M4.5 19.5h15',
+      rules: 'M4 6.5h9 M17 6.5h3 M13 4.5v4 M4 12h3 M11 12h9 M7 10v4 M4 17.5h11 M19 17.5h1 M15 15.5v4',
+      users: 'M12 3l7.5 3v5.5c0 4.6-3.1 8.1-7.5 9.5-4.4-1.4-7.5-4.9-7.5-9.5V6L12 3z M8.8 12l2.2 2.2 4.2-4.4',
+      schedule: 'M4 5.5h16V20H4z M4 9.5h16 M8 3v4.5 M16 3v4.5'
+    };
+    const S = [
+      ['Study', [['dashboard', 'Dashboard', 'Main.dc.html'], ['participants', 'Participants', '#'], ['screening', 'Screening', 'Screening.dc.html'], ['baseline', 'Baseline', '#'], ['randomise', 'Randomisation', '#']]],
+      ['Monitoring', [['monitoring', 'Patients', 'Patient.dc.html'], ['alerts', 'Alerts', 'Patient.dc.html', 6], ['careplans', 'Care plans', '#']]],
+      ['Data', [['queries', 'Queries', '#'], ['audit', 'Audit trail', '#'], ['exports', 'Exports', '#']]],
+      ['Admin', [['rules', 'Scoring rules', 'Rules.dc.html'], ['users', 'Users and roles', '#'], ['schedule', 'Visit schedule', '#']]]
+    ];
+    return S.map(([title, items]) => ({
+      title,
+      items: items.map(([k, label, href, badge]) => {
+        const on = k === active;
+        return {
+          label,
+          href,
+          d: I[k],
+          current: on ? 'page' : undefined,
+          bg: on ? 'rgba(255,255,255,0.08)' : 'transparent',
+          fg: on ? '#FFFFFF' : '#C9D2E0',
+          ic: on ? '#FF8597' : '#8C99AD',
+          hasBadge: !!badge,
+          badge: badge ? String(badge) : ''
+        };
+      })
+    }));
+  }
+
+  renderVals() {
+    const f = this.state.filter;
+    const F = [['all', 'All', 58], ['screening', 'Screening', 3], ['baseline', 'In baseline', 4], ['ready', 'Ready', 2], ['randomised', 'Randomised', 34], ['failed', 'Screen failed', 15]];
+    const rows = { r1: 'screening', r2: 'screening', r3: 'baseline', r4: 'ready', r5: 'randomised', r6: 'failed' };
+    const hide = {};
+    let shown = 0;
+    Object.keys(rows).forEach((r) => {
+      hide[r] = f !== 'all' && rows[r] !== f;
+      if (!hide[r]) shown += 1;
+    });
+    const sel = F.find((x) => x[0] === f) || F[0];
+    const chips = F.map(([k, label, n]) => {
+      const on = f === k;
+      return {
+        label,
+        n: String(n),
+        pressed: on,
+        pick: () => this.setState({ filter: k }),
+        bg: on ? '#0B1A2E' : '#FFFFFF',
+        fg: on ? '#FFFFFF' : '#3D4A5C',
+        bd: on ? '#0B1A2E' : '#CBD2DC',
+        nfg: on ? '#C9D2E0' : '#5B6779'
+      };
+    });
+    return {
+      nav: this.nav('dashboard'),
+      chips,
+      hide,
+      shownLabel: f === 'all'
+        ? 'Showing ' + shown + ' of 58 registered · sorted by last activity'
+        : 'Showing ' + shown + ' of ' + sel[2] + ' · ' + sel[1].toLowerCase()
+    };
+  }
+}
+</script>
+</body>
+</html>

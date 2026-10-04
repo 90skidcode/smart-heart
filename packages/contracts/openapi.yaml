@@ -1,0 +1,2994 @@
+openapi: 3.1.0
+info:
+  title: SMART-HEART / Smart Heart Idhayam API
+  version: 1.0.0
+  summary: Core PHP + MySQL backend for the SMART-HEART eCRF, Clinician Monitoring Portal and SHI participant app.
+  description: |
+    One REST API serves three clients:
+
+    | Client | Stack | Auth | Base path |
+    |---|---|---|---|
+    | eCRF + Admin + Clinician portal | Vite + React (web) | Staff JWT (password + TOTP MFA) | `/api/v1` |
+    | SHI participant app | React Native | Participant JWT (case number — no OTP, no SMS) | `/api/v1/app` |
+    | Caregiver view | React Native (same app, caregiver mode) | Caregiver JWT (the caregiver's own case number) | `/api/v1/app/caregiver` |
+
+    **Conventions**
+    * JSON only, `snake_case` fields, dates `YYYY-MM-DD`, timestamps ISO-8601 UTC.
+    * Errors use RFC 9457 `application/problem+json` (see `Problem`).
+    * Optimistic locking: every mutable clinical record returns `row_version`; send it back in `If-Match` on `PUT/PATCH`. Mismatch → `412`.
+    * After a CRF page is `complete`, any change requires `change_reason` (GCP audit trail) → otherwise `422`.
+    * App writes are idempotent via `client_uuid` (per record) and the `Idempotency-Key` header (per request).
+    * List endpoints are cursor-paginated: `?limit=&cursor=` → `{ data: [], next_cursor }`.
+    * All scores (eligibility, PHQ-9, GAD-7, DASI, EQ-5D-5L, DHRx, CCSPS, THR, rehab phase) are computed **server-side only**. Clients never send totals.
+  contact:
+    name: SMART-HEART engineering
+servers:
+  - url: https://api.smartheart.example.in/api/v1
+    description: Production
+  - url: https://staging-api.smartheart.example.in/api/v1
+    description: Staging
+  - url: http://localhost:8080/api/v1
+    description: Local (php -S / Docker)
+
+security:
+  - staffBearer: []
+
+tags:
+  - name: Auth · Staff
+  - name: Auth · Participant
+    description: |
+      Participants and caregivers sign in with a **case number** only. There is no OTP and no SMS.
+      A case number is 9 characters from `23456789ABCDEFGHJKMNPQRSTVWXYZ` (no 0/O, 1/I/L or U), shown as `K7Q-M3X-PDX`:
+      8 random characters from a CSPRNG plus a Luhn mod 30 check character, so the app catches typos before sending.
+      The server stores only an HMAC-SHA256 of the number. Each person has their own number; signing in on a new phone signs out the old one.
+  - name: App Access
+    description: Staff issue, re-issue and revoke case numbers, and sign out app devices. Numbers are shown once, when issued.
+  - name: Dashboard
+    description: Study dashboard counts and participant list (eCRF home)
+  - name: Participants
+  - name: REG-01 Registration
+  - name: SCR-01 Screening
+  - name: Consent
+  - name: Visits & Forms
+  - name: BL-01 Baseline
+  - name: Medications
+  - name: Labs
+  - name: PRO-01 Questionnaires
+  - name: CCSPS Composite
+  - name: SAF-01 Safety
+  - name: RAND-01 Randomisation
+  - name: Monitoring
+    description: Clinician Monitoring Portal (intervention arm)
+  - name: Alerts
+  - name: Care Plans
+  - name: Education
+  - name: Calculations
+    description: Versioned calculation engines (see the SMART-HEART Calculation Specification). Every result carries a step-by-step trace.
+  - name: Data Management
+    description: Queries, audit trail, exports, e-signatures
+  - name: Admin
+  - name: Files
+  - name: App · Profile & Onboarding
+  - name: App · Daily
+  - name: App · Sync
+  - name: App · Assessments
+  - name: App · Care
+  - name: App · Caregiver
+  - name: System
+
+paths:
+  # ───────────────────────────── SYSTEM ─────────────────────────────
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness / readiness probe
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  db: { type: string, example: ok }
+                  version: { type: string, example: 1.0.0 }
+
+  # ─────────────────────────── AUTH · STAFF ─────────────────────────
+  /auth/login:
+    post:
+      tags: [Auth · Staff]
+      summary: Staff login (step 1 — password)
+      description: Returns tokens directly if MFA is not enrolled, otherwise an `mfa_token` for `/auth/mfa/verify`. 5 failures → account locked 15 min.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Logged in or MFA required
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    properties:
+                      mfa_required: { type: boolean, const: true }
+                      mfa_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '423': { description: Account locked, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/mfa/verify:
+    post:
+      tags: [Auth · Staff]
+      summary: Staff login (step 2 — TOTP)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token]
+              description: Send `code` (from the authenticator) or `recovery_code` (one of the codes shown at enrolment; each works once).
+              properties:
+                mfa_token: { type: string }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+                recovery_code: { type: string, example: K7QM3-XPD9A, description: Case and hyphens ignored }
+      responses:
+        '200': { description: Tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { description: 'Wrong, expired or already-used code (counts towards the 5-failure lock)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '423': { description: Account locked, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /auth/mfa/enroll:
+    post:
+      tags: [Auth · Staff]
+      summary: Start TOTP enrolment (returns otpauth URI for QR)
+      responses:
+        '200':
+          description: Enrolment secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  otpauth_uri: { type: string }
+                  recovery_codes: { type: array, items: { type: string }, description: 10 single-use codes, shown only here }
+        '409': { description: MFA is already enabled (an administrator must reset it first), content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /auth/mfa/confirm:
+    post:
+      tags: [Auth · Staff]
+      summary: Finish TOTP enrolment with the first code from the authenticator
+      description: MFA stays off until this succeeds, so a mis-scanned QR code cannot lock anyone out. From then on, sign-in needs the MFA step.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '204': { description: MFA enabled }
+        '409': { description: No enrolment in progress, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/refresh:
+    post:
+      tags: [Auth · Staff, Auth · Participant]
+      summary: Rotate refresh token (staff, participant or caregiver)
+      description: |
+        Refresh tokens are single-use. Re-use of a rotated token revokes the whole token family,
+        except within 30 seconds of the rotation while the session is still live: that is treated as a retry
+        after a lost reply (weak mobile signal), and a fresh pair is issued instead.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200': { description: New pair, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      tags: [Auth · Staff, Auth · Participant]
+      summary: Revoke current refresh token family
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      responses:
+        '204': { description: Logged out }
+  /auth/me:
+    get:
+      tags: [Auth · Staff]
+      summary: Current staff user, roles and permissions
+      responses:
+        '200': { description: Me, content: { application/json: { schema: { $ref: '#/components/schemas/StaffUser' } } } }
+  /auth/reauth:
+    post:
+      tags: [Auth · Staff]
+      summary: Re-authenticate for an e-signature
+      description: Returns a short-lived (`5 min`) `signature_token` that must accompany any signing action (eligibility, SAF-01, RAND-01, sign-off).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+                totp: { type: string }
+      responses:
+        '200':
+          description: Signature token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signature_token: { type: string }
+                  expires_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────── AUTH · PARTICIPANT ─────────────────────
+  /app/auth/login:
+    post:
+      tags: [Auth · Participant]
+      summary: Sign in with a case number (participant or caregiver)
+      description: |
+        The person types the case number from their card. No OTP and no SMS: the number is the credential.
+        * The app checks the format and check character first (`caseNumber.ts`), so a typo never reaches the server.
+        * The server normalises the input (upper case, no spaces or hyphens), checks it again, then looks up
+          `HMAC-SHA256(pepper, number)` among **active** numbers. Whether the number belongs to a participant or a caregiver comes from the record, not from the request.
+        * Any failure — malformed, unknown, replaced, revoked, withdrawn — returns the same `401`, so nobody can test which numbers exist.
+        * Throttling: 5 failures from one install ID or IP within 15 minutes → `429` with `Retry-After` for 15 minutes.
+          50 failures across all clients within 10 minutes → alert to the on-call engineer.
+        * One phone per person: a successful sign-in revokes every earlier session for that person (`signed_out_other_device: true`).
+        * Every attempt is written to `app_login_attempts`, and every success or failure to `audit_log` (never the number itself).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaseNumberLogin' }
+            example: { case_number: K7Q-M3X-PDX, install_id: 3f0c2b9e-6a1d-4d7e-9b2a-8c5e1f4a7d20, platform: android, os_version: '14', device_model: Redmi Note 12, app_version: 1.0.0 }
+      responses:
+        '200':
+          description: Signed in. Tokens are bound to this install ID.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    properties:
+                      subject_type: { type: string, enum: [participant, caregiver] }
+                      onboarding_step: { type: string, nullable: true, example: language }
+                      preferred_language: { type: string, enum: [en, ta] }
+                      signed_out_other_device: { type: boolean, description: True when an earlier phone was signed out by this sign-in }
+        '401':
+          description: 'Same response for every failure: "That case number did not work. Check the card, or call the study team."'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ─────────────────────────── DASHBOARD ────────────────────────────
+  /dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Stat cards for the eCRF Study Dashboard
+      parameters: [ { $ref: '#/components/parameters/SiteId' } ]
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSummary' }
+
+  # ─────────────────────────── PARTICIPANTS ─────────────────────────
+  /participants:
+    get:
+      tags: [Participants]
+      summary: List / search participants
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ParticipantStatus' } }
+        - { name: arm, in: query, schema: { type: string, enum: [intervention, control] }, description: 'Hidden from blinded assessors (403 if used)' }
+        - { name: q, in: query, schema: { type: string }, description: 'Study ID, screening ID, app ID or exact phone' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of participants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ParticipantSummary' } }
+                  next_cursor: { type: string, nullable: true }
+  /participants/{participantId}:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [Participants]
+      summary: Participant header (status, IDs, progress, next action)
+      responses:
+        '200': { description: Participant, content: { application/json: { schema: { $ref: '#/components/schemas/Participant' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Participants]
+      summary: Update contact / demographic identifiers
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name: { type: string }
+                phone: { type: string }
+                email: { type: string, format: email }
+                preferred_language: { type: string, enum: [en, ta] }
+                change_reason: { type: string }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Participant' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+  /participants/{participantId}/withdraw:
+    post:
+      tags: [Participants]
+      summary: Withdraw participant (consent withdrawal / lost to follow-up)
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, reason, signature_token]
+              properties:
+                type: { type: string, enum: [withdrawn, lost_to_follow_up] }
+                reason: { type: string }
+                retain_collected_data: { type: boolean, default: true }
+                signature_token: { type: string }
+      responses:
+        '200': { description: Withdrawn; app access revoked, content: { application/json: { schema: { $ref: '#/components/schemas/Participant' } } } }
+  /participants/{participantId}/timeline:
+    get:
+      tags: [Participants]
+      summary: Visit schedule with form completion status (sidebar + progress bars)
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      responses:
+        '200':
+          description: Timeline
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Visit' }
+
+  # ─────────────────────────── REG-01 ───────────────────────────────
+  /registrations:
+    post:
+      tags: [REG-01 Registration]
+      summary: Register a new participant (creates participant + REG-01)
+      description: System generates `study_id` (SMART-HEART-NNNN) and `screening_id` (SCR-NNNN) inside a transaction using a per-site counter.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistrationInput' }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Registration' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /participants/{participantId}/registration:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [REG-01 Registration]
+      summary: Get REG-01
+      responses:
+        '200': { description: REG-01, content: { application/json: { schema: { $ref: '#/components/schemas/Registration' } } } }
+    put:
+      tags: [REG-01 Registration]
+      summary: Update REG-01
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RegistrationInput' } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Registration' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+
+  # ─────────────────────────── SCR-01 ───────────────────────────────
+  /participants/{participantId}/screening:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [SCR-01 Screening]
+      summary: Get SCR-01 with live eligibility evaluation
+      responses:
+        '200': { description: Screening, content: { application/json: { schema: { $ref: '#/components/schemas/Screening' } } } }
+    put:
+      tags: [SCR-01 Screening]
+      summary: Save SCR-01 (partial saves allowed)
+      description: |
+        Server recomputes age, PCI timing, LVEF/eGFR/BP status and the full `eligibility` block on every save.
+        As soon as any exclusion is met the response sets `eligibility.stop_at_screen` and the UI must stop asking further questions (per protocol: "the system will stop when an exclusion criterion is identified").
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScreeningInput' } } }
+      responses:
+        '200': { description: Saved + evaluated, content: { application/json: { schema: { $ref: '#/components/schemas/Screening' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /participants/{participantId}/screening/confirm:
+    post:
+      tags: [SCR-01 Screening]
+      summary: PI confirms eligibility decision (e-signature)
+      description: Requires permission `eligibility.sign`. Sets participant status to `eligible` or `screen_failed`, locks SCR-01 and records PI declaration signature.
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, signature_token, declaration_accepted]
+              properties:
+                decision: { type: string, enum: [eligible, ineligible] }
+                declaration_accepted: { type: boolean, const: true }
+                override_reason: { type: string, description: Required if decision differs from engine result }
+                signature_token: { type: string }
+      responses:
+        '200': { description: Confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/Screening' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ─────────────────────────── CONSENT ──────────────────────────────
+  /consent-documents:
+    get:
+      tags: [Consent]
+      summary: Active IEC-approved consent documents (EN / Tamil)
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      responses:
+        '200':
+          description: Documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConsentDocument' }
+  /participants/{participantId}/consents:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [Consent]
+      summary: Consent history (incl. re-consents on new versions)
+      responses:
+        '200': { description: Consents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Consent' } } } } }
+    post:
+      tags: [Consent]
+      summary: Record consent (only when status = eligible)
+      description: Signature / thumb impression and witness signature are uploaded first via `/files` and referenced by id.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ConsentInput' } } }
+      responses:
+        '201': { description: Consent recorded; participant → consented; baseline visit opened, content: { application/json: { schema: { $ref: '#/components/schemas/Consent' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ─────────────────────────── VISITS & FORMS ───────────────────────
+  /participants/{participantId}/visits/{visitCode}/forms:
+    get:
+      tags: [Visits & Forms]
+      summary: Expected forms for a visit with status (BL-01 module grid)
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - $ref: '#/components/parameters/VisitCode'
+      responses:
+        '200':
+          description: Form instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FormInstance' }
+  /participants/{participantId}/visits/{visitCode}/forms/{formCode}/complete:
+    post:
+      tags: [Visits & Forms]
+      summary: Mark a form complete (runs completeness + range checks)
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - $ref: '#/components/parameters/VisitCode'
+        - { name: formCode, in: path, required: true, schema: { type: string, example: BL01_M7 } }
+      responses:
+        '200': { description: Completed, content: { application/json: { schema: { $ref: '#/components/schemas/FormInstance' } } } }
+        '422': { description: Missing required fields, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+
+  # ─────────────────────────── BL-01 ────────────────────────────────
+  /participants/{participantId}/baseline/details:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M1 Participant details
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ParticipantDetails' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save M1 Participant details
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ParticipantDetails' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/ParticipantDetails' } } } } }
+  /participants/{participantId}/baseline/cv-profile:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M2 Cardiovascular profile (pre-filled from SCR-01)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CvProfile' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save M2 Cardiovascular profile
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CvProfile' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/CvProfile' } } } } }
+  /participants/{participantId}/visits/{visitCode}/anthropometry:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M3 Anthropometry for a visit
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Anthropometry' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save M3 Anthropometry (BMI computed)
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Anthropometry' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/Anthropometry' } } } } }
+  /participants/{participantId}/visits/{visitCode}/clinical-measurements:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M4 Clinical measurements
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ClinicalMeasurements' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save M4 (2 BP readings → mean computed; LVEF carried from SCR-01)
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClinicalMeasurements' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/ClinicalMeasurements' } } } } }
+  /participants/{participantId}/visits/{visitCode}/lifestyle:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M7 Lifestyle
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lifestyle' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save M7 Lifestyle
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Lifestyle' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/Lifestyle' } } } } }
+  /participants/{participantId}/visits/{visitCode}/six-minute-walk:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+    get:
+      tags: [BL-01 Baseline]
+      summary: M8 6-Minute Walk Test (assessor, eCRF only)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SixMinuteWalk' } } } } }
+    put:
+      tags: [BL-01 Baseline]
+      summary: Save 6MWT (category computed)
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SixMinuteWalk' } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/SixMinuteWalk' } } } } }
+  /participants/{participantId}/baseline/complete:
+    post:
+      tags: [BL-01 Baseline]
+      summary: M11 Baseline completion sign-off
+      description: Fails with 422 listing missing modules unless M1–M10 are complete.
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature_token]
+              properties:
+                signature_token: { type: string }
+      responses:
+        '200': { description: Baseline locked, content: { application/json: { schema: { $ref: '#/components/schemas/Participant' } } } }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ─────────────────────────── MEDICATIONS ──────────────────────────
+  /drugs:
+    get:
+      tags: [Medications]
+      summary: Drug dictionary (class → generic)
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      parameters: [ { name: drug_class, in: query, schema: { type: string } } ]
+      responses: { '200': { description: Drugs, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Drug' } } } } } }
+  /participants/{participantId}/medications:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [Medications]
+      summary: M6 Medication list (with 7-day adherence per drug)
+      parameters: [ { name: current_only, in: query, schema: { type: boolean, default: true } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Medication' } } } } } }
+    post:
+      tags: [Medications]
+      summary: Add medication (pushes to app Meds tab)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MedicationInput' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Medication' } } } } }
+  /participants/{participantId}/medications/{medicationId}:
+    parameters:
+      - $ref: '#/components/parameters/ParticipantId'
+      - { name: medicationId, in: path, required: true, schema: { type: integer } }
+    put:
+      tags: [Medications]
+      summary: Update / stop medication (verifies participant-added meds)
+      parameters: [ { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MedicationInput' } } } }
+      responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Medication' } } } } }
+
+  # ─────────────────────────── LABS ─────────────────────────────────
+  /lab-tests:
+    get:
+      tags: [Labs]
+      summary: Lab dictionary with canonical units & plausible ranges
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LabTest' } } } } } }
+  /participants/{participantId}/labs:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [Labs]
+      summary: M5 Lab results (all visits)
+      parameters: [ { name: visit, in: query, schema: { $ref: '#/components/schemas/VisitCode' } }, { name: test_code, in: query, schema: { type: string } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LabResult' } } } } } }
+    post:
+      tags: [Labs]
+      summary: Add lab results (bulk; unit converted to canonical)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [results]
+              properties:
+                visit_code: { $ref: '#/components/schemas/VisitCode' }
+                results: { type: array, items: { $ref: '#/components/schemas/LabResultInput' } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LabResult' } } } } } }
+  /participants/{participantId}/labs/{labId}/verify:
+    post:
+      tags: [Labs]
+      summary: Verify a participant-entered lab value against source report
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { name: labId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '200': { description: Verified, content: { application/json: { schema: { $ref: '#/components/schemas/LabResult' } } } } }
+
+  # ─────────────────────────── PRO-01 ───────────────────────────────
+  /instruments/{code}:
+    get:
+      tags: [PRO-01 Questionnaires]
+      summary: Instrument definition (items, response sets, EN/Tamil)
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      parameters: [ { $ref: '#/components/parameters/InstrumentCode' } ]
+      responses: { '200': { description: Instrument, content: { application/json: { schema: { $ref: '#/components/schemas/Instrument' } } } } }
+  /participants/{participantId}/visits/{visitCode}/pro/{code}:
+    parameters:
+      - $ref: '#/components/parameters/ParticipantId'
+      - $ref: '#/components/parameters/VisitCode'
+      - $ref: '#/components/parameters/InstrumentCode'
+    get:
+      tags: [PRO-01 Questionnaires]
+      summary: Get response + server-computed scores (clinician view)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProResponse' } } } } }
+    put:
+      tags: [PRO-01 Questionnaires]
+      summary: Save answers (tablet in clinic) — partial allowed, `complete=true` to finalise
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProAnswersInput' } } } }
+      responses:
+        '200': { description: Saved & scored, content: { application/json: { schema: { $ref: '#/components/schemas/ProResponse' } } } }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ─────────────────────────── CCSPS ────────────────────────────────
+  /participants/{participantId}/visits/{visitCode}/composite:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+    get:
+      tags: [CCSPS Composite]
+      summary: CCSPS composite score (10 domains × 0–2)
+      description: Read-only. Recomputed by the scoring job whenever an input changes. `normalised_0_100` is null until all 10 domains are scored.
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CompositeScore' } } } } }
+  /participants/{participantId}/visits/{visitCode}/composite/recompute:
+    post:
+      tags: [CCSPS Composite]
+      summary: Force recompute (data manager)
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { $ref: '#/components/parameters/VisitCode' } ]
+      responses: { '200': { description: Recomputed, content: { application/json: { schema: { $ref: '#/components/schemas/CompositeScore' } } } } }
+
+  # ─────────────────────────── SAF-01 ───────────────────────────────
+  /participants/{participantId}/safety-clearance:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [SAF-01 Safety]
+      summary: Safety checklist pre-filled from baseline data
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SafetyClearance' } } } } }
+    post:
+      tags: [SAF-01 Safety]
+      summary: PI grants or defers safety clearance (e-signature)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [safety_concerns, acute_decompensation_since_pci, signature_token]
+              properties:
+                checklist_notes: { type: object, additionalProperties: { type: string } }
+                acute_decompensation_since_pci: { type: boolean }
+                safety_concerns: { type: boolean }
+                deferral_reason: { type: string }
+                signature_token: { type: string }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/SafetyClearance' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ─────────────────────────── RAND-01 ──────────────────────────────
+  /participants/{participantId}/randomisation:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [RAND-01 Randomisation]
+      summary: Pre-randomisation gate checklist / existing allocation
+      description: Blinded roles (assessor, statistician-blinded) receive `arm` redacted.
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Randomisation' } } } } }
+    post:
+      tags: [RAND-01 Randomisation]
+      summary: Randomise (irreversible)
+      description: |
+        Gates: SCR-01 eligible + signed, consent, BL-01 complete, PRO-01 complete, SAF-01 cleared.
+        Takes next unused row in `randomisation_sequence` for site + age stratum using `SELECT … FOR UPDATE`.
+        If arm = intervention: creates the post-randomisation tasks, including `APP_ACCOUNT`.
+        The case number is not issued here. Staff issue it next with `POST /participants/{participantId}/case-numbers`,
+        so this idempotent response (and its cache) never holds a sign-in credential. No SMS is sent.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature_token]
+              properties:
+                signature_token: { type: string }
+      responses:
+        '201': { description: Allocated, content: { application/json: { schema: { $ref: '#/components/schemas/Randomisation' } } } }
+        '409': { description: Already randomised or a gate failed, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /participants/{participantId}/post-randomisation-tasks/{taskCode}:
+    put:
+      tags: [RAND-01 Randomisation]
+      summary: Tick a post-randomisation task (device issued, app account, FU-01 scheduled)
+      description: '`APP_ACCOUNT` is ticked automatically when the first case number is issued; the other tasks are ticked here.'
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - { name: taskCode, in: path, required: true, schema: { type: string, enum: [APP_ACCOUNT, WEARABLE_ISSUED, BP_MONITOR_ISSUED, CARE_PLAN_PUSHED, FU01_SCHEDULED] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                done: { type: boolean }
+                detail: { type: string, description: e.g. device serial number }
+      responses: { '204': { description: Saved } }
+
+  # ─────────────────────────── APP ACCESS ───────────────────────────
+  /participants/{participantId}/case-numbers:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [App Access]
+      summary: Case numbers and signed-in phones for a participant and their caregivers
+      description: Shows the hint ("ends in PDX"), version, status and sessions. The number itself is never returned after issue. Blinded roles get `403`, because having a case number reveals the intervention arm.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AppCredential' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [App Access]
+      summary: Issue or re-issue a case number (shown once)
+      description: |
+        Roles: PI, sub-investigator, care coach. Intervention arm only, and never after withdrawal or study completion.
+        * Generates 8 random characters with a CSPRNG plus a Luhn mod 30 check character, and retries on the rare HMAC collision.
+        * Re-issue (`reason` required) marks the previous number `replaced` and revokes every session it opened, in one transaction.
+        * The plain number is in this response only. It is not stored, logged or cached, so this endpoint takes no `Idempotency-Key`:
+          each call issues a new number and ends the previous one. The portal disables the button while the call runs, then prints the card.
+        * The first issue for the participant ticks the `APP_ACCOUNT` post-randomisation task.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject_type]
+              properties:
+                subject_type: { type: string, enum: [participant, caregiver] }
+                caregiver_id: { type: integer, description: Required when subject_type is caregiver }
+                reason: { type: string, maxLength: 255, description: 'Required on re-issue, e.g. "Card lost", "New phone, old one stolen"' }
+            example: { subject_type: participant, reason: Card lost }
+      responses:
+        '201':
+          description: Issued. Show it, print the card, then discard it.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseNumberIssued' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: 'Control arm, withdrawn, completed, or caregiver not linked to this participant', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: Re-issue without a reason, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /participants/{participantId}/case-numbers/{credentialId}/revoke:
+    post:
+      tags: [App Access]
+      summary: Revoke a case number and sign out its phone
+      description: For a caregiver who should no longer have access, or a suspected misuse. Withdrawal, loss to follow-up and study completion revoke every number for the case automatically.
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - { name: credentialId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, maxLength: 255 }
+      responses:
+        '204': { description: Revoked; its sessions are revoked too }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The number is already replaced or revoked, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /participants/{participantId}/case-numbers/{credentialId}/sign-out:
+    post:
+      tags: [App Access]
+      summary: Sign out the phone without changing the number
+      description: For a phone that was replaced or is being set up again. The card still works on the next sign-in. If the card itself may be lost, re-issue instead.
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - { name: credentialId, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: All sessions for this number revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────────────────── MONITORING ───────────────────────────
+  /monitoring/roster:
+    get:
+      tags: [Monitoring]
+      summary: Intervention-arm roster for the clinician rail
+      parameters: [ { $ref: '#/components/parameters/SiteId' } ]
+      responses:
+        '200':
+          description: Roster + cohort stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cohort:
+                    type: object
+                    properties:
+                      enrolled: { type: integer, example: 24 }
+                      flagged_today: { type: integer, example: 3 }
+                      wear_time_pct: { type: integer, example: 91 }
+                  data: { type: array, items: { $ref: '#/components/schemas/RosterItem' } }
+  /monitoring/participants/{participantId}/overview:
+    get:
+      tags: [Monitoring]
+      summary: Everything the clinician patient page needs in one call
+      description: Header, clinical record, latest vitals with 7-day series, steps (14 d), sleep, exercise, symptoms (10 d), outcomes, meds adherence, DHI adherence meter, care plans, education summary, open alerts.
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonitoringOverview' } } } } }
+  /monitoring/participants/{participantId}/series:
+    get:
+      tags: [Monitoring]
+      summary: Time series for charts
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+        - { name: metric, in: query, required: true, schema: { type: string, enum: [sbp, dbp, resting_hr, hrv_sdnn, spo2, weight, steps, sleep_minutes, mets, glucose_fasting] } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+        - { name: agg, in: query, schema: { type: string, enum: [raw, daily_mean, daily_max, weekly_mean], default: daily_mean } }
+      responses:
+        '200':
+          description: Points
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  metric: { type: string }
+                  unit: { type: string }
+                  points: { type: array, items: { $ref: '#/components/schemas/SeriesPoint' } }
+  /monitoring/participants/{participantId}/symptoms:
+    get:
+      tags: [Monitoring]
+      summary: Symptom diary heat-map + cluster detection
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { name: days, in: query, schema: { type: integer, default: 10, maximum: 90 } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SymptomDiary' } } } } }
+  /monitoring/participants/{participantId}/exercise:
+    get:
+      tags: [Monitoring]
+      summary: Prescribed vs completed sessions, HR-zone adherence
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { name: week_of, in: query, schema: { type: string, format: date } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ExerciseSummary' } } } } }
+  /monitoring/participants/{participantId}/adherence:
+    get:
+      tags: [Monitoring]
+      summary: DHI Adherence Meter (7 sub-domains) + per-drug adherence
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { name: window_days, in: query, schema: { type: integer, default: 7 } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdherenceMeter' } } } } }
+
+  # ─────────────────────────── ALERTS ───────────────────────────────
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: Alert inbox (rule-based + urgent care plans)
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - { name: participant_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: string, enum: [open, acknowledged, resolved, auto_cleared] } }
+        - { name: severity, in: query, schema: { type: string, enum: [info, warning, critical] } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Alert' } }
+                  next_cursor: { type: string, nullable: true }
+  /alerts/{alertId}/acknowledge:
+    post:
+      tags: [Alerts]
+      summary: Acknowledge an alert
+      parameters: [ { name: alertId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses: { '200': { description: Acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/Alert' } } } } }
+  /alerts/{alertId}/resolve:
+    post:
+      tags: [Alerts]
+      summary: Resolve an alert with action taken
+      parameters: [ { name: alertId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution_note]
+              properties:
+                resolution_note: { type: string }
+                care_plan_id: { type: integer, description: Care plan pushed in response }
+      responses: { '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/Alert' } } } } }
+
+  # ─────────────────────────── CARE PLANS ───────────────────────────
+  /care-plan-catalog:
+    get:
+      tags: [Care Plans]
+      summary: Catalogue filtered to a phase (or all)
+      parameters:
+        - { name: domain, in: query, schema: { $ref: '#/components/schemas/CareDomain' } }
+        - { name: phase, in: query, schema: { type: integer, minimum: 1, maximum: 4 } }
+        - { name: all_phases, in: query, schema: { type: boolean, default: false } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CatalogItem' } } } } } }
+    post:
+      tags: [Care Plans, Admin]
+      summary: Add catalogue item (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CatalogItem' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/CatalogItem' } } } } }
+  /participants/{participantId}/care-plans:
+    parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+    get:
+      tags: [Care Plans]
+      summary: Care plans pushed to participant
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CarePlan' } } } } } }
+    post:
+      tags: [Care Plans]
+      summary: Push a care plan to the participant's app
+      description: Creates the plan, sends an FCM/APNs push (EN/Tamil) and, if `urgent`, an alert that stays at the top of the dashboard until acknowledged. Care coach is copied.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalog_id, priority]
+              properties:
+                catalog_id: { type: integer }
+                priority: { type: string, enum: [routine, priority, urgent] }
+                clinician_note: { type: string, maxLength: 500 }
+      responses:
+        '201': { description: Pushed, content: { application/json: { schema: { $ref: '#/components/schemas/CarePlan' } } } }
+        '422': { description: Plan not applicable to participant's current phase (send all_phases override), content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /care-plans/{carePlanId}/acknowledge:
+    post:
+      tags: [Care Plans]
+      summary: Clinician acknowledges an urgent care plan
+      parameters: [ { name: carePlanId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CarePlan' } } } } }
+  /care-plans/{carePlanId}:
+    patch:
+      tags: [Care Plans]
+      summary: Complete or cancel a care plan
+      parameters: [ { name: carePlanId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [completed, cancelled] }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CarePlan' } } } } }
+
+  # ─────────────────────────── EDUCATION ────────────────────────────
+  /education/modules:
+    get:
+      tags: [Education]
+      summary: Education library (8 categories, bilingual)
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      parameters: [ { name: category, in: query, schema: { type: string } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EducationModule' } } } } } }
+    post:
+      tags: [Education, Admin]
+      summary: Create module (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EducationModule' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/EducationModule' } } } } }
+  /participants/{participantId}/education:
+    get:
+      tags: [Education]
+      summary: Library with participant status (completed / in progress / assigned / recommended)
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completed: { type: integer }
+                  total: { type: integer }
+                  recommended: { type: integer }
+                  modules: { type: array, items: { $ref: '#/components/schemas/EducationProgress' } }
+  /participants/{participantId}/education/{moduleCode}/assign:
+    post:
+      tags: [Education]
+      summary: Assign a module (push notification sent)
+      parameters: [ { $ref: '#/components/parameters/ParticipantId' }, { name: moduleCode, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Assigned, content: { application/json: { schema: { $ref: '#/components/schemas/EducationProgress' } } } } }
+
+  # ─────────────────────────── DATA MANAGEMENT ──────────────────────
+  /data-queries:
+    get:
+      tags: [Data Management]
+      summary: List data queries
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, answered, closed, cancelled] } }
+        - { name: participant_id, in: query, schema: { type: integer } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DataQuery' } } } } } }
+    post:
+      tags: [Data Management]
+      summary: Raise a query against a field
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participant_id, table_name, record_id, field_name, query_text]
+              properties:
+                participant_id: { type: integer }
+                table_name: { type: string }
+                record_id: { type: integer }
+                field_name: { type: string }
+                query_text: { type: string }
+      responses: { '201': { description: Raised, content: { application/json: { schema: { $ref: '#/components/schemas/DataQuery' } } } } }
+  /data-queries/{queryId}:
+    patch:
+      tags: [Data Management]
+      summary: Answer / close / cancel a query
+      parameters: [ { name: queryId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: { type: string, enum: [answer, close, cancel, reopen] }
+                text: { type: string }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DataQuery' } } } } }
+  /audit:
+    get:
+      tags: [Data Management]
+      summary: Audit trail (who changed what, when, why)
+      parameters:
+        - { name: participant_id, in: query, schema: { type: integer } }
+        - { name: entity_table, in: query, schema: { type: string } }
+        - { name: entity_id, in: query, schema: { type: integer } }
+        - { name: actor_id, in: query, schema: { type: integer } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }, next_cursor: { type: string, nullable: true } } } } } } }
+  /audit/verify-chain:
+    get:
+      tags: [Data Management]
+      summary: Verify audit hash chain integrity
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  checked_rows: { type: integer }
+                  first_broken_id: { type: integer, nullable: true }
+  /exports:
+    post:
+      tags: [Data Management]
+      summary: Request a dataset export (async)
+      description: De-identified by default (no names/phones). Produces CSV per form + data dictionary; optional REDCap-compatible format. Blinded statistician exports carry arm as masked code A/B.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format: { type: string, enum: [csv_zip, redcap_csv, spss_sav, stata_dta] }
+                forms: { type: array, items: { type: string } }
+                visits: { type: array, items: { $ref: '#/components/schemas/VisitCode' } }
+                include_daily_monitoring: { type: boolean, default: false }
+                mask_arm: { type: boolean, default: true }
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+  /exports/{exportId}:
+    get:
+      tags: [Data Management]
+      summary: Export status + signed download URL
+      parameters: [ { name: exportId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ExportJob' } } } } }
+
+  # ─────────────────────────── ADMIN ────────────────────────────────
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List staff users
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StaffUser' } } } } } }
+    post:
+      tags: [Admin]
+      summary: Create staff user (invite email with set-password link)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, full_name, site_id, roles]
+              properties:
+                email: { type: string, format: email }
+                full_name: { type: string }
+                site_id: { type: integer }
+                roles: { type: array, items: { $ref: '#/components/schemas/RoleCode' } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/StaffUser' } } } } }
+  /admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      summary: Update roles / disable / unlock / reset MFA
+      parameters: [ { name: userId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roles: { type: array, items: { $ref: '#/components/schemas/RoleCode' } }
+                status: { type: string, enum: [active, locked, disabled] }
+                reset_mfa: { type: boolean }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StaffUser' } } } } }
+  /admin/sites:
+    get:
+      tags: [Admin]
+      summary: List sites
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Site' } } } } } }
+  /admin/randomisation-sequence:
+    post:
+      tags: [Admin]
+      summary: Import statistician's allocation list (one-time, CSV upload)
+      description: Only role `statistician` (unblinded). Rejected once any allocation has been used. File is never readable back through the API.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, site_id]
+              properties:
+                file: { type: string, format: binary }
+                site_id: { type: integer }
+      responses: { '201': { description: Imported, content: { application/json: { schema: { type: object, properties: { rows: { type: integer }, batch: { type: string } } } } } } }
+  /admin/alert-rules:
+    get:
+      tags: [Admin]
+      summary: Alert thresholds
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AlertRule' } } } } } }
+  /admin/alert-rules/{ruleId}:
+    put:
+      tags: [Admin]
+      summary: Change a threshold (audited, requires reason)
+      parameters: [ { name: ruleId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [params, is_active, change_reason]
+              properties:
+                params: { type: object }
+                is_active: { type: boolean }
+                change_reason: { type: string }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AlertRule' } } } } }
+  /admin/visit-schedule:
+    get:
+      tags: [Admin]
+      summary: Visit definitions + form matrix
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    code: { $ref: '#/components/schemas/VisitCode' }
+                    label: { type: string }
+                    day_offset: { type: integer }
+                    window_before: { type: integer }
+                    window_after: { type: integer }
+                    forms: { type: array, items: { type: object, properties: { form_code: { type: string }, delivery: { type: string, enum: [ecrf, app, either] } } } }
+  /admin/settings:
+    get:
+      tags: [Admin]
+      summary: Key/value settings (app sign-in policy and throttling, session timeouts, CCSPS spec version…)
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /admin/scoring-configs:
+    get:
+      tags: [Admin, Calculations]
+      summary: Versioned parameters for every calculation engine
+      parameters:
+        - { name: engine, in: query, schema: { $ref: '#/components/schemas/EngineCode' } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, active, retired] } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScoringConfig' } } } } } }
+    post:
+      tags: [Admin, Calculations]
+      summary: Create a new draft version of an engine's parameters
+      description: A draft never affects stored results. It becomes active only after both PI and statistician approve it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [engine, version, params, change_reason]
+              properties:
+                engine: { $ref: '#/components/schemas/EngineCode' }
+                version: { type: string, example: '1.1' }
+                params: { type: object }
+                change_reason: { type: string }
+      responses:
+        '201': { description: Draft created, content: { application/json: { schema: { $ref: '#/components/schemas/ScoringConfig' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/scoring-configs/{configId}/approve:
+    post:
+      tags: [Admin, Calculations]
+      summary: PI or statistician approves a draft (e-signature)
+      description: When the second approval lands, the draft becomes active from `effective_from` and the previous version is retired. Re-scoring stored results is a separate, audited data-management action.
+      parameters: [ { name: configId, in: path, required: true, schema: { type: integer } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, signature_token, effective_from]
+              properties:
+                role: { type: string, enum: [pi, statistician] }
+                effective_from: { type: string, format: date }
+                signature_token: { type: string }
+      responses: { '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/ScoringConfig' } } } } }
+  /calculations/{engine}/evaluate:
+    post:
+      tags: [Calculations]
+      summary: Run a calculation engine on supplied inputs (no data stored)
+      description: |
+        Used by UAT scripts, the validation test vectors and the eCRF's live previews. Returns the result **and the step-by-step trace**
+        exactly as it would be stored. Uses the active config unless `config_version` is given. Nothing is written to clinical tables;
+        the call itself is audited.
+      parameters: [ { name: engine, in: path, required: true, schema: { $ref: '#/components/schemas/EngineCode' } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inputs]
+              properties:
+                config_version: { type: string, example: '1.0' }
+                inputs: { type: object, description: 'Engine-specific inputs, with the same field names as the stored records' }
+            examples:
+              thr:
+                summary: THR for portal participant 001
+                value: { inputs: { age: 58, resting_hr: 68, nyha: I, phase: 3, on_beta_blocker: true } }
+              dasi:
+                summary: DASI items 1–4 and 7–10
+                value: { inputs: { yes: [true, true, true, true, false, false, true, true, true, true, false, false] } }
+      responses:
+        '200':
+          description: Result and trace
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalculationResult' }
+              examples:
+                thr:
+                  summary: Karvonen zone
+                  value: { engine: THR, config_version: '1.0', config_status: draft, result: { zone: { low: 124, high: 133 }, hr_max: 162, pct_hrr: [60, 69], primary_guide: 'RPE 11–13 (Borg 6–20); HR zone advisory only' }, trace: [ { step: hr_max, formula: '220 − age', value: 162 }, { step: hrr, formula: 'hr_max − resting_hr', value: 94 }, { step: low, formula: '94 × 0.60 + 68', value: 124.4, rounded: 124 }, { step: high, formula: '94 × 0.69 + 68', value: 132.86, rounded: 133 } ] }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ─────────────────────────── FILES ────────────────────────────────
+  /files:
+    post:
+      tags: [Files]
+      summary: Upload a file (consent signature, discharge summary, diet plan, lab report)
+      description: Max 10 MB. Allowed MIME image/jpeg, image/png, application/pdf, audio/mp4, video/mp4. Stored encrypted outside web root; virus-scanned.
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, purpose]
+              properties:
+                file: { type: string, format: binary }
+                purpose: { type: string, enum: [consent_signature, consent_scan, consent_av, discharge_summary, diet_plan, lab_report, echo_report] }
+                participant_id: { type: integer, description: Staff only; inferred from token for participants }
+      responses: { '201': { description: Stored, content: { application/json: { schema: { $ref: '#/components/schemas/FileRef' } } } } }
+  /files/{fileId}:
+    get:
+      tags: [Files]
+      summary: Short-lived download URL (access-checked)
+      security: [ { staffBearer: [] }, { participantBearer: [] } ]
+      parameters: [ { name: fileId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { url: { type: string }, expires_at: { type: string, format: date-time } } } } } } }
+
+  # ═════════════════════════ MOBILE APP ═════════════════════════════
+  /app/me:
+    get:
+      tags: [App · Profile & Onboarding]
+      summary: Participant profile + server-computed context
+      description: Rehab phase, day post-PCI, THR zone, step goal, language, onboarding step, caregiver status. Arm/allocation is never returned.
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AppMe' } } } } }
+    patch:
+      tags: [App · Profile & Onboarding]
+      summary: Update app preferences (language, goal, push token)
+      security: [ { participantBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preferred_language: { type: string, enum: [en, ta] }
+                goal: { type: string, enum: [family, activity, strength, work, other] }
+                push_token: { type: string }
+                push_platform: { type: string, enum: [fcm, apns] }
+                app_version: { type: string }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AppMe' } } } } }
+  /app/onboarding/step:
+    post:
+      tags: [App · Profile & Onboarding]
+      summary: Record onboarding progress (resume on reinstall)
+      security: [ { participantBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step]
+              properties:
+                step: { type: string, enum: [language, readiness, devices, baseline_bp, education_intro, done] }
+      responses: { '204': { description: Saved } }
+  /app/readiness/{code}:
+    post:
+      tags: [App · Profile & Onboarding]
+      summary: Submit BRiDgE engagement readiness (onboarding)
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: code, in: path, required: true, schema: { type: string, enum: [BRIDGE] } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers: { type: object, additionalProperties: { type: integer } }
+      responses:
+        '201':
+          description: Scored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  score: { type: integer }
+                  max_score: { type: integer }
+                  band: { type: string, example: Moderate — light support }
+                  support_plan: { type: string }
+  /app/caregivers:
+    get:
+      tags: [App · Profile & Onboarding]
+      summary: List caregivers
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Caregiver' } } } } } }
+    post:
+      tags: [App · Profile & Onboarding]
+      summary: Add a caregiver and get their case number (requires consent.caregiver_access_ok)
+      description: The caregiver gets their own case number, shown once in this response so the participant can pass it on. The caregiver signs in with it on their own phone; their view is read-only. The phone number is for the study team to call, not for sign-in.
+      security: [ { participantBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [relation]
+              properties:
+                name: { type: string }
+                relation: { type: string }
+                phone: { type: string, description: Contact only }
+                email: { type: string, format: email }
+                notify_on: { type: array, items: { type: string, enum: [bp_sync, alerts, missed_meds, weekly_summary] } }
+      responses:
+        '201':
+          description: Added. The case number appears only in this response.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Caregiver'
+                  - type: object
+                    properties:
+                      case_number: { type: string, pattern: '^[2-9A-HJKMNP-TV-Z]{3}-[2-9A-HJKMNP-TV-Z]{3}-[2-9A-HJKMNP-TV-Z]{3}$', example: R9D-ZWX-84F }
+  /app/caregivers/{caregiverId}:
+    delete:
+      tags: [App · Profile & Onboarding]
+      summary: Remove a caregiver (revokes their case number and signs out their phone)
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: caregiverId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '204': { description: Revoked } }
+  /app/devices:
+    get:
+      tags: [App · Profile & Onboarding]
+      summary: Devices issued / paired
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Device' } } } } } }
+    post:
+      tags: [App · Profile & Onboarding]
+      summary: Register pairing (Health Connect / HealthKit permission granted, or BLE pair)
+      security: [ { participantBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_type, make_model, integration]
+              properties:
+                device_type: { type: string, enum: [wearable, bp_monitor, glucometer, scale] }
+                make_model: { type: string }
+                integration: { type: string, enum: [health_connect, healthkit, ble_direct, manual] }
+                serial_no: { type: string }
+      responses: { '201': { description: Paired, content: { application/json: { schema: { $ref: '#/components/schemas/Device' } } } } }
+
+  /app/today:
+    get:
+      tags: [App · Daily]
+      summary: Home tab — today's checklist, latest vitals, due assessments, new care plans
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: date, in: query, schema: { type: string, format: date }, description: Local date; defaults to today in site TZ } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AppToday' } } } } }
+  /app/medications:
+    get:
+      tags: [App · Daily]
+      summary: Meds tab — schedule by slot with today's dose status
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: date, in: query, schema: { type: string, format: date } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AppMedSchedule' } } } } }
+    post:
+      tags: [App · Daily]
+      summary: Participant adds a medication (pending staff verification)
+      security: [ { participantBearer: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MedicationInput' } } } }
+      responses: { '201': { description: Added (unverified), content: { application/json: { schema: { $ref: '#/components/schemas/Medication' } } } } }
+  /app/exercise/prescription:
+    get:
+      tags: [App · Daily]
+      summary: Exercise tab — current prescription and THR zone
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ExercisePrescription' } } } } }
+  /app/nutrition/plan:
+    get:
+      tags: [App · Daily]
+      summary: Nutrition tab — uploaded diet plan, meal template, guidelines
+      security: [ { participantBearer: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  diet_plan_file: { $ref: '#/components/schemas/FileRef' }
+                  meals: { type: array, items: { type: object, properties: { key: { type: string }, label_en: { type: string }, label_ta: { type: string }, time_window: { type: string }, suggestion: { type: string } } } }
+                  guidelines: { type: array, items: { type: object, properties: { key: { type: string }, label_en: { type: string }, label_ta: { type: string } } } }
+  /app/history:
+    get:
+      tags: [App · Daily]
+      summary: Vitals tab — participant's own trends
+      security: [ { participantBearer: [] } ]
+      parameters:
+        - { name: metric, in: query, required: true, schema: { type: string, enum: [bp, resting_hr, spo2, weight, steps, sleep] } }
+        - { name: days, in: query, schema: { type: integer, default: 14, maximum: 180 } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SeriesPoint' } } } } } }
+
+  /app/sync:
+    post:
+      tags: [App · Sync]
+      summary: Batch upload of offline-queued records (idempotent)
+      description: |
+        The app queues every write locally (SQLite) and flushes here when online. Each record carries a `client_uuid`;
+        duplicates are acknowledged, not re-inserted. Max 500 records / 1 MB per call. Records older than 30 days or more than 5 min in the future are rejected.
+        After insert, the server enqueues alert evaluation and CCSPS/adherence recomputation.
+      security: [ { participantBearer: [] } ]
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SyncBatch' } } }
+      responses:
+        '200': { description: Per-record results, content: { application/json: { schema: { $ref: '#/components/schemas/SyncResult' } } } }
+        '413': { description: Batch too large }
+  /app/sync/changes:
+    get:
+      tags: [App · Sync]
+      summary: Pull server-side changes since a cursor
+      description: New/updated meds, care plans, education assignments, schedule changes, lab verifications. App calls on launch, on push, and every 15 min in foreground.
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: since, in: query, schema: { type: string }, description: Opaque cursor from previous call } ]
+      responses:
+        '200':
+          description: Changes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cursor: { type: string }
+                  medications: { type: array, items: { $ref: '#/components/schemas/Medication' } }
+                  care_plans: { type: array, items: { $ref: '#/components/schemas/AppCarePlan' } }
+                  education: { type: array, items: { $ref: '#/components/schemas/EducationProgress' } }
+                  assessments_due: { type: array, items: { $ref: '#/components/schemas/AppAssessmentDue' } }
+                  profile_changed: { type: boolean }
+
+  /app/assessments:
+    get:
+      tags: [App · Assessments]
+      summary: Assess tab — schedule driven by server visit windows
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AppAssessmentDue' } } } } } }
+  /app/assessments/{visitCode}/{code}:
+    parameters:
+      - $ref: '#/components/parameters/VisitCode'
+      - $ref: '#/components/parameters/InstrumentCode'
+    get:
+      tags: [App · Assessments]
+      summary: Instrument + saved partial answers (resume)
+      security: [ { participantBearer: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instrument: { $ref: '#/components/schemas/Instrument' }
+                  answers: { type: object, additionalProperties: { type: number } }
+                  status: { type: string, enum: [not_started, in_progress, complete] }
+    put:
+      tags: [App · Assessments]
+      summary: Save answers (autosave) / complete
+      description: Response to the participant never contains scores or severity for PHQ-9 / GAD-7 / EQ-5D / DASI (`show_score_to_participant = false`). If PHQ-9 item 9 > 0 the response includes `safety_message` and the server raises a critical alert immediately.
+      security: [ { participantBearer: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProAnswersInput' } } } }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [in_progress, complete] }
+                  safety_message: { $ref: '#/components/schemas/SafetyMessage' }
+        '409': { description: Outside visit window or already complete }
+  /app/recovery-score:
+    get:
+      tags: [App · Assessments]
+      summary: Participant-friendly recovery score (CCSPS domains as coaching tiles)
+      description: Shows domains as Ideal / Keep going / Needs attention — mental-health domain is hidden from the participant.
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AppRecoveryScore' } } } } }
+
+  /app/care-plans:
+    get:
+      tags: [App · Care]
+      summary: Care plan cards (EN/Tamil)
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AppCarePlan' } } } } } }
+  /app/care-plans/{carePlanId}/read:
+    post:
+      tags: [App · Care]
+      summary: Mark care plan card as read
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: carePlanId, in: path, required: true, schema: { type: integer } } ]
+      responses: { '204': { description: OK } }
+  /app/education:
+    get:
+      tags: [App · Care]
+      summary: Education library for participant (assigned + recommended first)
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EducationProgress' } } } } } }
+  /app/education/{moduleCode}/progress:
+    post:
+      tags: [App · Care]
+      summary: Report module progress
+      security: [ { participantBearer: [] } ]
+      parameters: [ { name: moduleCode, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [in_progress, completed] }
+                seconds_spent_delta: { type: integer, minimum: 0 }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/EducationProgress' } } } } }
+  /app/teleconsults:
+    get:
+      tags: [App · Care]
+      summary: Upcoming teleconsults
+      security: [ { participantBearer: [] } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Teleconsult' } } } } } }
+
+  /app/caregiver/summary:
+    get:
+      tags: [App · Caregiver]
+      summary: Read-only view for a caregiver
+      description: Latest BP/HR, today's med adherence, steps, open participant-visible reminders. No PRO answers, no mental-health data.
+      security: [ { caregiverBearer: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  participant_first_name: { type: string }
+                  latest_bp: { $ref: '#/components/schemas/VitalReading' }
+                  meds_taken_today: { type: integer }
+                  meds_due_today: { type: integer }
+                  steps_today: { type: integer }
+                  reminders: { type: array, items: { type: string } }
+
+components:
+  securitySchemes:
+    staffBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Access token (15 min, HS256/EdDSA). Claims: sub, typ=user, site, roles[], perms[], blinded(bool).'
+    participantBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Issued by case-number sign-in (/app/auth/login). Access token (30 min) bound to the install ID; refresh 90 days, rotated. Claims: sub, typ=participant, pid, cred (credential id), dev.'
+    caregiverBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Read-only caregiver token, issued by the caregiver''s own case number. Access 30 min; refresh 30 days, rotated. Claims: sub, typ=caregiver, pid, cred, dev.'
+
+  parameters:
+    ParticipantId: { name: participantId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    VisitCode: { name: visitCode, in: path, required: true, schema: { $ref: '#/components/schemas/VisitCode' } }
+    InstrumentCode: { name: code, in: path, required: true, schema: { $ref: '#/components/schemas/InstrumentCode' } }
+    SiteId: { name: site_id, in: query, schema: { type: integer }, description: Defaults to the caller's site }
+    Limit: { name: limit, in: query, schema: { type: integer, default: 25, maximum: 200 } }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    IfMatch: { name: If-Match, in: header, required: true, schema: { type: string, example: '"7"' }, description: Current row_version }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string, format: uuid } }
+
+  responses:
+    Unauthorized: { description: Missing / invalid credentials, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Forbidden: { description: Your role cannot do this (or the record would unblind you), content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    NotFound: { description: Not found, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Conflict: { description: State conflict (wrong status for this action), content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PreconditionFailed: { description: row_version mismatch — reload and retry, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    ValidationError: { description: Validation failed, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    TooManyRequests: { description: Rate limited, headers: { Retry-After: { schema: { type: integer } } }, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, example: 'https://api.smartheart.example.in/problems/validation' }
+        title: { type: string, example: Validation failed }
+        status: { type: integer, example: 422 }
+        detail: { type: string }
+        request_id: { type: string, format: uuid }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, example: sbp }
+              code: { type: string, example: out_of_range }
+              message: { type: string }
+    TokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, example: 900 }
+        token_type: { type: string, example: Bearer }
+    CaseNumber:
+      type: string
+      description: 9 characters from 23456789ABCDEFGHJKMNPQRSTVWXYZ, the last a Luhn mod 30 check character. Accepted in any case, with or without spaces and hyphens; returned as XXX-XXX-XXX.
+      pattern: '^[2-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{3}[- ]?[2-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{3}[- ]?[2-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{3}$'
+      example: K7Q-M3X-PDX
+    CaseNumberLogin:
+      type: object
+      required: [case_number, install_id, platform, app_version]
+      properties:
+        case_number: { $ref: '#/components/schemas/CaseNumber' }
+        install_id: { type: string, format: uuid, description: Random ID the app creates on first launch and keeps in secure storage }
+        platform: { type: string, enum: [android, ios] }
+        os_version: { type: string, example: '14' }
+        device_model: { type: string, example: Redmi Note 12, description: Shown to staff as the signed-in phone }
+        app_version: { type: string, example: 1.0.0 }
+    CaseNumberIssued:
+      type: object
+      required: [credential_id, case_number, subject_type, version, issued_at]
+      properties:
+        credential_id: { type: integer }
+        case_number: { type: string, description: 'The plain number. Returned only here, never again.', example: K7Q-M3X-PDX }
+        subject_type: { type: string, enum: [participant, caregiver] }
+        caregiver_id: { type: integer, nullable: true }
+        hint: { type: string, example: PDX }
+        version: { type: integer, example: 2, description: '1 for the first number, +1 per re-issue' }
+        replaced_credential_id: { type: integer, nullable: true }
+        sessions_revoked: { type: integer, example: 1, description: Sessions ended because the previous number was replaced }
+        issued_at: { type: string, format: date-time }
+        card:
+          type: object
+          description: Text for the printed card. The card is bilingual; print the participant's preferred language first.
+          properties:
+            primary_language: { type: string, enum: [en, ta] }
+            heading_en: { type: string, example: Your SMART-HEART case number }
+            heading_ta: { type: string, example: உங்கள் SMART-HEART உள்நுழைவு எண் }
+            instructions_en: { type: string, example: 'Open the SHI app and type this number. Keep this card safe. If you lose it, call the study team for a new one.' }
+            instructions_ta: { type: string }
+            helpline: { type: string, example: '[STUDY HELPLINE NUMBER]' }
+    AppCredential:
+      type: object
+      properties:
+        id: { type: integer }
+        subject_type: { type: string, enum: [participant, caregiver] }
+        caregiver_id: { type: integer, nullable: true }
+        caregiver_relation: { type: string, nullable: true, example: daughter }
+        hint: { type: string, example: PDX, description: 'Shown as "ends in PDX"' }
+        version: { type: integer }
+        status: { type: string, enum: [active, replaced, revoked] }
+        issued_at: { type: string, format: date-time }
+        issued_by: { type: string, example: B. Charles }
+        issue_reason: { type: string, nullable: true }
+        first_login_at: { type: string, format: date-time, nullable: true }
+        last_login_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
+        end_reason: { type: string, nullable: true }
+        sessions:
+          type: array
+          items:
+            type: object
+            properties:
+              device_label: { type: string, example: Android 14 · Redmi Note 12 }
+              app_version: { type: string }
+              signed_in_at: { type: string, format: date-time }
+              last_used_at: { type: string, format: date-time, nullable: true }
+    RoleCode: { type: string, enum: [admin, pi, sub_investigator, assessor, clinician, care_coach, data_manager, statistician, monitor] }
+    StaffUser:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        full_name: { type: string, example: Dr Bindu Charles }
+        site: { $ref: '#/components/schemas/Site' }
+        roles: { type: array, items: { $ref: '#/components/schemas/RoleCode' } }
+        permissions: { type: array, items: { type: string } }
+        blinded: { type: boolean }
+        mfa_enabled: { type: boolean }
+        status: { type: string, enum: [active, locked, disabled] }
+    Site:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string, example: SRMC }
+        name: { type: string, example: Sri Ramachandra Medical Centre }
+        timezone: { type: string, example: Asia/Kolkata }
+    VisitCode: { type: string, enum: [SCR, BL, D14, D30, D60, D90, D180] }
+    InstrumentCode: { type: string, enum: [PHQ9, GAD7, EQ5D5L, DASI, DHRX, BRIDGE, RYP_INDIA] }
+    ParticipantStatus: { type: string, enum: [registered, screening, screen_failed, eligible, consented, baseline, safety_cleared, randomised, withdrawn, lost_to_follow_up, completed] }
+    CareDomain: { type: string, enum: [exercise, nutrition, medication, tobacco, psychosocial, sleep, education, teleconsult, escalation] }
+
+    DashboardSummary:
+      type: object
+      properties:
+        screening_pending: { type: integer, example: 8 }
+        eligible_awaiting_baseline: { type: integer, example: 3 }
+        screen_failures: { type: integer, example: 2 }
+        baseline_complete: { type: integer, example: 5 }
+        randomised: { type: integer, example: 4 }
+        randomised_by_arm: { type: object, nullable: true, description: Null for blinded roles, properties: { intervention: { type: integer }, control: { type: integer } } }
+        target_enrolment: { type: integer, example: 240 }
+        screened_estimate: { type: integer, example: 499 }
+    ParticipantSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        study_id: { type: string, example: SMART-HEART-0031 }
+        display_name: { type: string, example: Rajan Pillai }
+        status: { $ref: '#/components/schemas/ParticipantStatus' }
+        status_label: { type: string, example: Baseline 7/11 }
+        registered_on: { type: string, format: date }
+        next_action: { type: string, enum: [continue_screening, start_baseline, resume_baseline, safety_clearance, randomise, view, log] }
+    Participant:
+      allOf:
+        - $ref: '#/components/schemas/ParticipantSummary'
+        - type: object
+          properties:
+            screening_id: { type: string, example: SCR-0031 }
+            app_access:
+              type: object
+              nullable: true
+              description: Null for the control arm and for blinded roles (a case number would reveal the arm).
+              properties:
+                participant_case_number: { type: string, enum: [not_issued, active, revoked], description: Status of the participant's number; the number itself is never returned }
+                hint: { type: string, nullable: true, example: PDX }
+                version: { type: integer, example: 1 }
+                caregivers_with_access: { type: integer, example: 1 }
+                last_sign_in_at: { type: string, format: date-time, nullable: true }
+            dob: { type: string, format: date }
+            age_years: { type: integer }
+            sex: { type: string, enum: [M, F, O] }
+            phone_masked: { type: string }
+            preferred_language: { type: string, enum: [en, ta] }
+            arm: { type: string, enum: [intervention, control], nullable: true }
+            age_stratum: { type: string, enum: [lt60, ge60], nullable: true }
+            pci_date: { type: string, format: date }
+            days_post_pci: { type: integer }
+            rehab_phase: { type: integer, minimum: 1, maximum: 4 }
+            baseline_progress: { type: object, properties: { complete: { type: integer }, total: { type: integer, example: 11 } } }
+            row_version: { type: integer }
+    Visit:
+      type: object
+      properties:
+        code: { $ref: '#/components/schemas/VisitCode' }
+        label: { type: string }
+        target_date: { type: string, format: date }
+        window_start: { type: string, format: date }
+        window_end: { type: string, format: date }
+        actual_date: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [scheduled, open, in_progress, complete, missed, not_applicable] }
+        forms: { type: array, items: { $ref: '#/components/schemas/FormInstance' } }
+    FormInstance:
+      type: object
+      properties:
+        form_code: { type: string, example: BL01_M7 }
+        label: { type: string, example: 7 · Lifestyle }
+        status: { type: string, enum: [not_started, in_progress, complete, signed, locked] }
+        source: { type: string, enum: [ecrf, app, tablet, import] }
+        delivery: { type: string, enum: [ecrf, app, either] }
+        completed_at: { type: string, format: date-time, nullable: true }
+        open_queries: { type: integer }
+
+    RegistrationInput:
+      type: object
+      required: [registration_date, referral_source, potentially_eligible, full_name, phone]
+      properties:
+        full_name: { type: string }
+        phone: { type: string, example: '+919876543210' }
+        registration_date: { type: string, format: date }
+        referral_source: { type: string, enum: [pci_unit_inpatient, cardiology_opd, cardiology_ward, other] }
+        referral_other: { type: string }
+        potentially_eligible: { type: boolean }
+    Registration:
+      allOf:
+        - $ref: '#/components/schemas/RegistrationInput'
+        - type: object
+          properties:
+            participant_id: { type: integer }
+            study_id: { type: string, example: SMART-HEART-0032 }
+            screening_id: { type: string, example: SCR-0032 }
+            row_version: { type: integer }
+
+    ScreeningInput:
+      type: object
+      properties:
+        screening_date: { type: string, format: date }
+        dob: { type: string, format: date }
+        index_diagnosis: { type: string, enum: [acs, stable_ihd, other] }
+        index_diagnosis_other: { type: string }
+        acs_subtype: { type: string, enum: [stemi, nstemi, unstable_angina] }
+        pci_done: { type: boolean }
+        pci_date: { type: string, format: date }
+        pci_indication: { type: string, enum: [acs, stable_ihd, other] }
+        vessels_treated: { type: integer, minimum: 1, maximum: 5 }
+        stents_implanted: { type: integer, minimum: 0, maximum: 10 }
+        access_site: { type: string, enum: [femoral, radial, brachial] }
+        cabg_history: { type: boolean }
+        lvef_pct: { type: integer, minimum: 5, maximum: 85 }
+        lvef_source: { type: string }
+        lvef_date: { type: string, format: date }
+        prior_cardiac_arrest: { $ref: '#/components/schemas/YesNoUnknown' }
+        complex_vent_arrhythmia: { $ref: '#/components/schemas/YesNoUnknown' }
+        cardiogenic_shock: { $ref: '#/components/schemas/YesNoUnknown' }
+        t2dm: { type: boolean }
+        retinopathy: { $ref: '#/components/schemas/YesNoUnknown' }
+        peripheral_neuropathy: { $ref: '#/components/schemas/YesNoUnknown' }
+        diabetic_foot_ulcer: { $ref: '#/components/schemas/YesNoUnknown' }
+        egfr: { type: number, minimum: 1, maximum: 200 }
+        egfr_source: { type: string, enum: [lab_reported, ckd_epi_2021], description: 'Which value the eligibility rule uses (decision D29)' }
+        egfr_lab_equation: { type: string, example: CKD-EPI 2009 }
+        creatinine_mg_dl: { type: number, minimum: 0.2, maximum: 15, description: 'Lets the server compute CKD-EPI 2021 and flag an entered eGFR that differs by more than the configured tolerance' }
+        sbp: { type: integer, minimum: 60, maximum: 260 }
+        dbp: { type: integer, minimum: 30, maximum: 160 }
+        bp_reading_count: { type: integer, enum: [1, 2], description: 'With 2, sbp and dbp are the mean' }
+        on_antihypertensive: { type: boolean }
+        visual_impairment: { type: string, enum: [no, yes_aids_ok, yes_unsafe] }
+        hearing_impairment: { type: string, enum: [no, yes_aids_ok, yes_unsafe] }
+        cognitive_impairment: { type: string, enum: [no, yes_caregiver_ok, yes_unsafe] }
+        smartphone_access: { type: boolean }
+        primary_phone_user: { type: string, enum: [participant, household_member] }
+        phone_os: { type: string, enum: [android, ios] }
+        change_reason: { type: string }
+    YesNoUnknown: { type: string, enum: [no, yes, unknown] }
+    Screening:
+      allOf:
+        - $ref: '#/components/schemas/ScreeningInput'
+        - type: object
+          properties:
+            age_years: { type: integer, readOnly: true }
+            pci_days_before_screen: { type: integer, readOnly: true }
+            eligibility: { $ref: '#/components/schemas/EligibilityResult' }
+            confirmed_by: { type: string, nullable: true }
+            confirmed_at: { type: string, format: date-time, nullable: true }
+            status: { type: string, enum: [in_progress, complete, signed, locked] }
+            row_version: { type: integer }
+    EligibilityResult:
+      type: object
+      readOnly: true
+      properties:
+        result: { type: string, enum: [pending, eligible, ineligible] }
+        stop_at_screen: { type: integer, nullable: true, description: First screen (1–8) that triggered an exclusion }
+        engine_version: { type: string, example: '1.0.0' }
+        inclusion:
+          type: array
+          items: { $ref: '#/components/schemas/CriterionStatus' }
+        exclusion:
+          type: array
+          items: { $ref: '#/components/schemas/CriterionStatus' }
+        unknowns: { type: array, items: { type: string }, description: Fields answered "unknown" that block a final decision }
+    CriterionStatus:
+      type: object
+      properties:
+        code: { type: string, example: LVEF_LT_40 }
+        label: { type: string, example: LVEF <40% }
+        status: { type: string, enum: [met, not_met, pending, unknown] }
+        evidence: { type: string, example: LVEF 52% }
+
+    ConsentDocument:
+      type: object
+      properties:
+        id: { type: integer }
+        version: { type: string, example: v3.0 }
+        language: { type: string, enum: [en, ta] }
+        iec_approval_ref: { type: string }
+        effective_from: { type: string, format: date }
+        file: { $ref: '#/components/schemas/FileRef' }
+    ConsentInput:
+      type: object
+      required: [consent_document_id, method, signed_at, signature_file_id]
+      properties:
+        consent_document_id: { type: integer }
+        method: { type: string, enum: [paper_scanned, econsent_tablet, econsent_app] }
+        signed_at: { type: string, format: date-time }
+        signature_file_id: { type: integer }
+        is_thumb_impression: { type: boolean }
+        impartial_witness_name: { type: string }
+        witness_signature_file_id: { type: integer }
+        av_recording_file_id: { type: integer }
+        data_sharing_ok: { type: boolean }
+        caregiver_access_ok: { type: boolean }
+    Consent:
+      allOf:
+        - $ref: '#/components/schemas/ConsentInput'
+        - type: object
+          properties:
+            id: { type: integer }
+            obtained_by: { type: string }
+            withdrawn_at: { type: string, format: date-time, nullable: true }
+
+    ParticipantDetails:
+      type: object
+      properties:
+        sex: { type: string, enum: [M, F, O] }
+        marital_status: { type: string, enum: [single, married, widowed, separated_divorced, other] }
+        education: { type: string, enum: [none, primary, secondary, higher_secondary, graduate, postgraduate] }
+        employment: { type: string, enum: [employed, self_employed, unemployed, retired, homemaker, other] }
+        residence: { type: string, enum: [urban, semi_urban, rural] }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+    CvProfile:
+      type: object
+      properties:
+        index_event_date: { type: string, format: date }
+        diagnosis_text: { type: string, example: NSTEMI — inferolateral }
+        culprit_vessel: { type: string, example: RCA }
+        vessels_summary: { type: string }
+        killip_class: { type: string, enum: [I, II, III, IV] }
+        nyha_class: { type: string, enum: [I, II, III, IV] }
+        prior_mi: { type: boolean }
+        prior_pci: { type: boolean }
+        hypertension: { type: boolean }
+        dyslipidaemia: { type: boolean }
+        ckd_stage: { type: integer, minimum: 1, maximum: 5 }
+        family_history_cad: { type: boolean }
+        risk_tier: { type: string, enum: [low, low_moderate, moderate, high] }
+        carried_from_screening: { type: array, readOnly: true, items: { type: string } }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+    Anthropometry:
+      type: object
+      properties:
+        height_cm: { type: number, minimum: 120, maximum: 220 }
+        weight_kg: { type: number, minimum: 30, maximum: 250 }
+        bmi: { type: number, readOnly: true }
+        waist_cm: { type: number }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+    ClinicalMeasurements:
+      type: object
+      properties:
+        sbp_1: { type: integer }
+        dbp_1: { type: integer }
+        sbp_2: { type: integer }
+        dbp_2: { type: integer }
+        sbp_mean: { type: number, readOnly: true }
+        dbp_mean: { type: number, readOnly: true }
+        heart_rate: { type: integer }
+        spo2: { type: integer }
+        lvef_pct: { type: integer, readOnly: true }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+    Lifestyle:
+      type: object
+      properties:
+        smoking_status: { type: string, enum: [never, former, current] }
+        tobacco_type: { type: array, items: { type: string, enum: [cigarette, bidi, smokeless, other] } }
+        units_per_day: { type: integer }
+        years_smoked: { type: integer }
+        quit_date: { type: string, format: date }
+        sleep_hours_self: { type: number }
+        alcohol_use: { type: boolean }
+        alcohol_units_week: { type: integer }
+        physical_activity_min_week: { type: integer }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+    SixMinuteWalk:
+      type: object
+      properties:
+        performed: { type: boolean }
+        not_done_reason: { type: string }
+        distance_m: { type: integer, minimum: 0, maximum: 900 }
+        pre_hr: { type: integer }
+        post_hr: { type: integer }
+        pre_spo2: { type: integer }
+        post_spo2: { type: integer }
+        pre_borg: { type: integer, minimum: 6, maximum: 20 }
+        post_borg: { type: integer, minimum: 6, maximum: 20 }
+        stopped_early: { type: boolean }
+        category: { type: string, enum: [poor, intermediate, ideal], readOnly: true }
+        change_reason: { type: string }
+        row_version: { type: integer, readOnly: true }
+
+    Drug:
+      type: object
+      properties:
+        id: { type: integer }
+        drug_class: { type: string, example: p2y12 }
+        generic_name: { type: string, example: Ticagrelor }
+        is_dapt_component: { type: boolean }
+    MedicationInput:
+      type: object
+      required: [dose, frequency, slots]
+      properties:
+        drug_id: { type: integer }
+        drug_name_free: { type: string }
+        dose: { type: string, example: 90 mg }
+        frequency: { type: string, enum: [od, bd, tds, qid, od_night, prn, weekly, other] }
+        slots: { type: array, items: { type: string, enum: [morning, afternoon, evening, night] } }
+        start_date: { type: string, format: date }
+        stop_date: { type: string, format: date }
+        is_current: { type: boolean }
+        change_reason: { type: string }
+        client_uuid: { type: string, format: uuid }
+    Medication:
+      allOf:
+        - $ref: '#/components/schemas/MedicationInput'
+        - type: object
+          properties:
+            id: { type: integer }
+            drug_class: { type: string }
+            display_name: { type: string, example: Ticagrelor 90 mg }
+            is_dapt_component: { type: boolean }
+            source: { type: string, enum: [ecrf, app_participant, discharge_ocr] }
+            verified: { type: boolean }
+            adherence_7d_pct: { type: integer, nullable: true }
+            row_version: { type: integer }
+
+    LabTest:
+      type: object
+      properties:
+        code: { type: string, example: LDL }
+        label: { type: string }
+        canonical_unit: { type: string, example: mg/dL }
+        alt_unit: { type: string, nullable: true, example: mmol/L }
+        min_plausible: { type: number }
+        max_plausible: { type: number }
+    LabResultInput:
+      type: object
+      required: [test_code, value, unit, sample_date]
+      properties:
+        test_code: { type: string }
+        value: { type: number }
+        unit: { type: string }
+        sample_date: { type: string, format: date }
+        source: { type: string, enum: [lab_report, medical_record, participant_app] }
+        method: { type: string, enum: [direct, friedewald, martin_hopkins, sampson, ckd_epi_2021, ckd_epi_2009, mdrd, other], description: 'LDL derivation or eGFR equation (decision D30)' }
+        client_uuid: { type: string, format: uuid }
+    LabResult:
+      allOf:
+        - $ref: '#/components/schemas/LabResultInput'
+        - type: object
+          properties:
+            id: { type: integer }
+            value_canonical: { type: number }
+            canonical_unit: { type: string }
+            verified: { type: boolean }
+            visit_code: { $ref: '#/components/schemas/VisitCode' }
+
+    Instrument:
+      type: object
+      properties:
+        code: { $ref: '#/components/schemas/InstrumentCode' }
+        name: { type: string }
+        version: { type: string }
+        recall_period: { type: string }
+        intro_en: { type: string }
+        intro_ta: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              item_no: { type: string, example: '9' }
+              text_en: { type: string }
+              text_ta: { type: string }
+              is_scored: { type: boolean }
+              is_safety_item: { type: boolean }
+              responses:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value: { type: number }
+                    label_en: { type: string }
+                    label_ta: { type: string }
+    ProAnswersInput:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: object
+          additionalProperties: { type: number }
+          example: { '1': 0, '2': 1, '3': 1, '9': 0, F: 1 }
+        vas: { type: integer, minimum: 0, maximum: 100, description: EQ-5D-5L only }
+        complete: { type: boolean, default: false }
+        delivery: { type: string, enum: [app, tablet, ecrf_interview] }
+        started_at: { type: string, format: date-time }
+        client_uuid: { type: string, format: uuid }
+    ProResponse:
+      type: object
+      properties:
+        instrument_code: { $ref: '#/components/schemas/InstrumentCode' }
+        visit_code: { $ref: '#/components/schemas/VisitCode' }
+        status: { type: string, enum: [in_progress, complete] }
+        answers: { type: object, additionalProperties: { type: number } }
+        total_score: { type: number, nullable: true, example: 9 }
+        max_score: { type: number, example: 27 }
+        severity: { type: string, nullable: true, example: mild }
+        derived:
+          type: object
+          description: Instrument-specific outputs
+          properties:
+            item9_positive: { type: boolean }
+            clinical_review: { type: boolean }
+            function_item: { type: string, example: somewhat_difficult }
+            missing_items: { type: integer, example: 0 }
+            prorated: { type: boolean }
+            vo2peak: { type: number, example: 24.2, description: 'DASI: 0.43 × score + 9.6, mL/kg/min' }
+            mets: { type: number, example: 6.9, description: 'DASI: vo2peak ÷ 3.5' }
+            health_state: { type: string, example: '21111' }
+            vas: { type: integer, nullable: true, description: 'Null when the participant did not set it; never defaulted' }
+            utility_in: { type: number, nullable: true, example: 0.843, description: 'India EQ-5D-5L value set (Jyani 2022); null until the licensed set is loaded' }
+            trace: { $ref: '#/components/schemas/CalcTrace' }
+        scoring_version: { type: string }
+        delivery: { type: string }
+        completed_at: { type: string, format: date-time, nullable: true }
+    SafetyMessage:
+      type: object
+      nullable: true
+      properties:
+        title_en: { type: string }
+        title_ta: { type: string }
+        body_en: { type: string, example: 'If you are having thoughts of harming yourself, please call your care coordinator now, or Tele-MANAS on 14416 or 1800-891-4416 (free, 24 hours), or 104.' }
+        body_ta: { type: string }
+        call_numbers: { type: array, items: { type: string }, example: ['<coordinator number>', '14416', '1800-891-4416', '104'] }
+
+    CompositeScore:
+      type: object
+      properties:
+        visit_code: { $ref: '#/components/schemas/VisitCode' }
+        spec_version: { type: string, example: CCSPS-1.0 }
+        domains:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [bp, ldl, hba1c, diet, physical_activity, smoking, sleep, bmi, mental_health, medication_adherence] }
+              label: { type: string }
+              score: { type: integer, nullable: true, minimum: 0, maximum: 2 }
+              status: { type: string, enum: [scored, pending] }
+              input_summary: { type: string, example: 'PHQ-9 9 (mild) · GAD-7 10 (moderate) → higher severity governs' }
+              source: { type: string, example: clinic_lab, description: 'Where the input came from; must be the same in both arms' }
+        raw_score: { type: integer, example: 3, description: 'Sum of scored domains only' }
+        domains_scored: { type: integer, example: 7 }
+        max_possible: { type: integer, example: 14, description: '2 × domains_scored' }
+        normalised_0_100: { type: number, nullable: true, description: 'Null until the SAP rule is met (complete case or ≥ 8 domains)' }
+        normalisation_method: { type: string, nullable: true, enum: [complete_case, proportional] }
+        config_version: { type: string, example: '1.0' }
+        trace: { $ref: '#/components/schemas/CalcTrace' }
+        is_final: { type: boolean }
+        computed_at: { type: string, format: date-time }
+
+    SafetyClearance:
+      type: object
+      properties:
+        checklist:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, example: PHQ9_ITEM9_REVIEWED }
+              label: { type: string }
+              auto_status: { type: string, enum: [ok, flag, missing] }
+              evidence: { type: string }
+        acute_decompensation_since_pci: { type: boolean, nullable: true }
+        safety_concerns: { type: boolean, nullable: true }
+        outcome: { type: string, enum: [pending, cleared, deferred] }
+        cleared_by: { type: string, nullable: true }
+        cleared_at: { type: string, format: date-time, nullable: true }
+    Randomisation:
+      type: object
+      properties:
+        gates:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, enum: [ELIGIBLE, CONSENT, BASELINE_COMPLETE, PRO_COMPLETE, SAFETY_CLEARED, STRATUM] }
+              passed: { type: boolean }
+              detail: { type: string }
+        can_randomise: { type: boolean }
+        allocated: { type: boolean }
+        stratum: { type: string, enum: [lt60, ge60] }
+        arm: { type: string, enum: [intervention, control], nullable: true, description: Redacted (null) for blinded users }
+        case_number_issued: { type: boolean, nullable: true, description: Null for blinded users }
+        randomised_at: { type: string, format: date-time, nullable: true }
+        post_tasks:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              done: { type: boolean }
+              detail: { type: string }
+
+    RosterItem:
+      type: object
+      properties:
+        participant_id: { type: integer }
+        study_id: { type: string, example: SMART-HEART-0048 }
+        age: { type: integer }
+        sex: { type: string }
+        days_post_pci: { type: integer }
+        rehab_phase: { type: integer }
+        status_colour: { type: string, enum: [ok, watch, alert] }
+        open_alerts: { type: integer }
+        last_sync_at: { type: string, format: date-time }
+    VitalTile:
+      type: object
+      properties:
+        value: { type: string, example: '168/96' }
+        unit: { type: string }
+        status: { type: string, enum: [ideal, inter, poor] }
+        trend: { type: string, enum: [improving, worsening, stable] }
+        series_7d: { type: array, items: { type: number } }
+    MonitoringOverview:
+      type: object
+      properties:
+        header:
+          type: object
+          properties:
+            study_id: { type: string, example: SMART-HEART-0048 }
+            age: { type: integer }
+            sex: { type: string }
+            rehab_phase: { type: integer }
+            phase_label: { type: string, example: Phase II · Remote monitoring }
+            days_post_pci: { type: integer }
+            goal: { type: string }
+            caregiver: { type: string }
+            last_sync_at: { type: string, format: date-time }
+        clinical:
+          type: object
+          properties:
+            diagnosis: { type: string }
+            index_date: { type: string, format: date }
+            procedure: { type: string }
+            vessels: { type: string }
+            lvef_pct: { type: integer }
+            lvef_band: { type: string, enum: [preserved, mildly_reduced, reduced] }
+            nyha: { type: string }
+            killip: { type: string }
+            comorbidities: { type: array, items: { type: string } }
+            risk_tier: { type: string }
+        alerts: { type: array, items: { $ref: '#/components/schemas/Alert' } }
+        vitals:
+          type: object
+          properties:
+            bp: { $ref: '#/components/schemas/VitalTile' }
+            resting_hr: { $ref: '#/components/schemas/VitalTile' }
+            hrv: { $ref: '#/components/schemas/VitalTile' }
+            spo2: { $ref: '#/components/schemas/VitalTile' }
+            weight: { $ref: '#/components/schemas/VitalTile' }
+        steps:
+          type: object
+          properties:
+            avg_7d: { type: integer }
+            goal: { type: integer }
+            series_14d: { type: array, items: { type: integer } }
+            mets: { type: number }
+        sleep:
+          type: object
+          properties:
+            avg_hours_7d: { type: number }
+            deep_pct: { type: integer }
+            light_pct: { type: integer }
+            rem_pct: { type: integer }
+            series_7d: { type: array, items: { type: number } }
+        exercise: { $ref: '#/components/schemas/ExerciseSummary' }
+        symptoms: { $ref: '#/components/schemas/SymptomDiary' }
+        composite:
+          type: object
+          properties:
+            baseline: { type: number }
+            current: { type: number }
+            scale: { type: string, example: '0-100' }
+            domains: { type: array, items: { type: object, properties: { label: { type: string }, score: { type: integer } } } }
+        cardiometabolic:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [bp, hba1c, ldl, bmi] }
+              value: { type: string }
+              target: { type: string }
+              status: { type: string, enum: [ideal, inter, poor] }
+        six_minute_walk: { type: object, properties: { latest_m: { type: integer }, baseline_m: { type: integer }, category: { type: string } } }
+        mental_health: { type: object, properties: { phq9: { type: integer }, gad7: { type: integer }, as_of: { type: string, format: date } } }
+        medications: { type: array, items: { $ref: '#/components/schemas/Medication' } }
+        adherence: { $ref: '#/components/schemas/AdherenceMeter' }
+        care_plans: { type: array, items: { $ref: '#/components/schemas/CarePlan' } }
+        education: { type: object, properties: { completed: { type: integer }, total: { type: integer }, recommended: { type: integer } } }
+    SeriesPoint:
+      type: object
+      properties:
+        t: { type: string, description: date or date-time }
+        v: { type: number }
+        v2: { type: number, nullable: true }
+    SymptomDiary:
+      type: object
+      properties:
+        days: { type: array, items: { type: string, format: date } }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [chest_pain, breathlessness, palpitations, dizziness, ankle_swelling, fatigue, fever, cough], description: 'One list for app and portal, each scored 0–3' }
+              label: { type: string }
+              severities: { type: array, items: { type: integer, minimum: 0, maximum: 3, nullable: true } }
+        days_logged: { type: integer }
+        cluster: { type: string, nullable: true, description: Human-readable red-flag cluster sentence }
+    ExerciseSummary:
+      type: object
+      properties:
+        sessions_done: { type: integer }
+        sessions_prescribed: { type: integer }
+        zone_low: { type: integer }
+        zone_high: { type: integer }
+        avg_pct_in_zone: { type: integer }
+        sessions:
+          type: array
+          items:
+            type: object
+            properties:
+              started_at: { type: string, format: date-time }
+              type: { type: string }
+              duration_min: { type: integer }
+              avg_hr: { type: integer }
+              pct_in_zone: { type: integer }
+              rpe_borg: { type: integer }
+              zone_status: { type: string, enum: [in_zone, above_zone, below_zone] }
+    AdherenceMeter:
+      type: object
+      properties:
+        total_pct: { type: integer, example: 88 }
+        subdomains:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [app_usage, wearable_use, self_report, teleconsult_attendance, education, caregiver_engagement, symptom_med_reporting] }
+              label: { type: string }
+              pct: { type: integer }
+        medication_mean_pct: { type: integer }
+        dapt_below_target: { type: boolean }
+    Alert:
+      type: object
+      properties:
+        id: { type: integer }
+        participant_id: { type: integer }
+        study_id: { type: string, example: SMART-HEART-0048 }
+        rule_code: { type: string, nullable: true, example: SBP_GT_160 }
+        source: { type: string, enum: [rule, care_plan, manual] }
+        severity: { type: string, enum: [info, warning, critical] }
+        message: { type: string, example: Systolic BP 168 mmHg — above safety threshold }
+        evidence: { type: object }
+        status: { type: string, enum: [open, acknowledged, resolved, auto_cleared] }
+        created_at: { type: string, format: date-time }
+        acknowledged_by: { type: string, nullable: true }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+    AlertRule:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        description: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        params: { type: object }
+        is_active: { type: boolean }
+
+    CatalogItem:
+      type: object
+      properties:
+        id: { type: integer, readOnly: true }
+        domain: { $ref: '#/components/schemas/CareDomain' }
+        title_en: { type: string }
+        title_ta: { type: string }
+        body_en: { type: string }
+        body_ta: { type: string }
+        phases: { type: array, nullable: true, items: { type: integer, minimum: 1, maximum: 4 }, description: Null = all phases }
+        is_active: { type: boolean }
+    CarePlan:
+      type: object
+      properties:
+        id: { type: integer }
+        participant_id: { type: integer }
+        domain: { $ref: '#/components/schemas/CareDomain' }
+        title: { type: string }
+        priority: { type: string, enum: [routine, priority, urgent] }
+        clinician_note: { type: string, nullable: true }
+        phase_at_push: { type: integer }
+        pushed_by: { type: string }
+        pushed_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        read_at: { type: string, format: date-time, nullable: true }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [active, completed, cancelled] }
+    EducationModule:
+      type: object
+      properties:
+        code: { type: string, example: h2 }
+        category: { type: string, enum: [heart, meds, activity, nutrition, tobacco, mind, monitor, family] }
+        title_en: { type: string }
+        title_ta: { type: string }
+        format: { type: string, enum: [video, article, interactive] }
+        minutes: { type: integer }
+        phases: { type: array, nullable: true, items: { type: integer } }
+        content_url_en: { type: string }
+        content_url_ta: { type: string }
+    EducationProgress:
+      allOf:
+        - $ref: '#/components/schemas/EducationModule'
+        - type: object
+          properties:
+            status: { type: string, enum: [recommended, available, assigned, in_progress, completed] }
+            assigned_at: { type: string, format: date-time, nullable: true }
+            completed_at: { type: string, format: date-time, nullable: true }
+            seconds_spent: { type: integer }
+
+    DataQuery:
+      type: object
+      properties:
+        id: { type: integer }
+        participant_id: { type: integer }
+        study_id: { type: string }
+        table_name: { type: string }
+        record_id: { type: integer }
+        field_name: { type: string }
+        query_text: { type: string }
+        status: { type: string, enum: [open, answered, closed, cancelled] }
+        raised_by: { type: string }
+        raised_at: { type: string, format: date-time }
+        response_text: { type: string, nullable: true }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        actor: { type: string }
+        actor_type: { type: string }
+        action: { type: string }
+        entity_table: { type: string }
+        entity_id: { type: integer }
+        participant_id: { type: integer, nullable: true }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              old: {}
+              new: {}
+        reason: { type: string, nullable: true }
+    ExportJob:
+      type: object
+      properties:
+        id: { type: integer }
+        status: { type: string, enum: [queued, running, done, failed] }
+        format: { type: string }
+        requested_at: { type: string, format: date-time }
+        download_url: { type: string, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+    FileRef:
+      type: object
+      nullable: true
+      properties:
+        id: { type: integer }
+        purpose: { type: string }
+        mime_type: { type: string }
+        size_bytes: { type: integer }
+        uploaded_at: { type: string, format: date-time }
+
+    AppMe:
+      type: object
+      properties:
+        case_number_hint: { type: string, example: PDX, description: 'Last group of the case number, so the participant can tell the study team which card they hold. The app never receives study_id or arm.' }
+        first_name: { type: string }
+        preferred_language: { type: string, enum: [en, ta] }
+        days_post_pci: { type: integer, example: 14 }
+        rehab_phase: { type: integer, example: 2 }
+        phase_label_en: { type: string }
+        phase_label_ta: { type: string }
+        nyha_class: { type: string }
+        thr:
+          type: object
+          description: 'Server-computed exercise zone. low/high are null when no zone applies (Phase I, NYHA IV, resting HR ≥ 100 or not yet measured); reason says why.'
+          properties:
+            low: { type: integer, nullable: true, example: 115 }
+            high: { type: integer, nullable: true, example: 123 }
+            method: { type: string, example: 'Karvonen, 220 − age, 45–54 % of heart-rate reserve, resting HR 74 (7-day mean)' }
+            reason: { type: string, nullable: true, description: "e.g. 'Phase I — ADL only' or 'resting HR ≥ 100 bpm — clinician review'" }
+            primary_guide: { type: string, example: 'RPE 11–13 (Borg 6–20); HR zone advisory only' }
+        daily_step_goal: { type: integer }
+        fluid:
+          type: object
+          properties:
+            mode: { type: string, enum: [target, limit], description: 'limit = do not exceed (heart-failure participants)' }
+            volume_ml: { type: integer, nullable: true, example: 1500 }
+            ml_per_glass: { type: integer, example: 250 }
+        goal: { type: string }
+        onboarding_step: { type: string, nullable: true }
+        caregiver_active: { type: boolean }
+        study_contact_phone: { type: string }
+    AppToday:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        greeting_day: { type: integer, example: 14 }
+        tasks:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, example: walk_20 }
+              icon: { type: string }
+              label_en: { type: string }
+              label_ta: { type: string }
+              time_hint: { type: string }
+              done: { type: boolean }
+        latest:
+          type: object
+          properties:
+            bp: { $ref: '#/components/schemas/VitalReading' }
+            resting_hr: { $ref: '#/components/schemas/VitalReading' }
+            spo2: { $ref: '#/components/schemas/VitalReading' }
+            steps_today: { type: integer }
+            fluid_glasses: { type: integer }
+        assessments_due: { type: integer }
+        unread_care_plans: { type: integer }
+        symptoms_logged_today: { type: boolean }
+    AppMedSchedule:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        adherence_today_pct: { type: integer }
+        slots:
+          type: array
+          items:
+            type: object
+            properties:
+              slot: { type: string, enum: [morning, afternoon, evening, night] }
+              time_window: { type: string }
+              doses:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    medication_id: { type: integer }
+                    name: { type: string }
+                    dose: { type: string }
+                    status: { type: string, enum: [due, taken, skipped, missed] }
+    ExercisePrescription:
+      type: object
+      properties:
+        thr_low: { type: integer }
+        thr_high: { type: integer }
+        basis: { type: string, example: 'NYHA I · Phase 2 · Age 55' }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [aerobic, resistance, breathing, flexibility] }
+              title_en: { type: string }
+              title_ta: { type: string }
+              frequency: { type: string, example: 4–7×/wk }
+              duration_min: { type: integer }
+              intensity: { type: string, example: RPE 11–13 }
+              done_today_min: { type: integer }
+    AppAssessmentDue:
+      type: object
+      properties:
+        visit_code: { $ref: '#/components/schemas/VisitCode' }
+        instrument_code: { type: string, example: PHQ9 }
+        label_en: { type: string }
+        label_ta: { type: string }
+        window_start: { type: string, format: date }
+        window_end: { type: string, format: date }
+        status: { type: string, enum: [locked, due, in_progress, complete, overdue, missed] }
+    AppRecoveryScore:
+      type: object
+      properties:
+        as_of_visit: { $ref: '#/components/schemas/VisitCode' }
+        tiles:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              label_en: { type: string }
+              label_ta: { type: string }
+              band: { type: string, enum: [ideal, keep_going, needs_attention, pending] }
+              tip_en: { type: string }
+              tip_ta: { type: string }
+    AppCarePlan:
+      type: object
+      properties:
+        id: { type: integer }
+        domain: { $ref: '#/components/schemas/CareDomain' }
+        title_en: { type: string }
+        title_ta: { type: string }
+        body_en: { type: string }
+        body_ta: { type: string }
+        note_from_team: { type: string, nullable: true }
+        priority: { type: string, enum: [routine, priority, urgent] }
+        pushed_at: { type: string, format: date-time }
+        read: { type: boolean }
+    Caregiver:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        relation: { type: string }
+        phone_masked: { type: string }
+        invite_status: { type: string, enum: [invited, active, revoked] }
+        notify_on: { type: array, items: { type: string } }
+    Device:
+      type: object
+      properties:
+        id: { type: integer }
+        device_type: { type: string }
+        make_model: { type: string, example: Omron HEM-7156T }
+        integration: { type: string }
+        paired_at: { type: string, format: date-time, nullable: true }
+        last_sync_at: { type: string, format: date-time, nullable: true }
+    Teleconsult:
+      type: object
+      properties:
+        id: { type: integer }
+        consult_type: { type: string, enum: [cardiologist, cr_nurse, physiotherapy, dietitian, counsellor] }
+        scheduled_at: { type: string, format: date-time }
+        status: { type: string }
+        join_url: { type: string, nullable: true }
+
+    EngineCode: { type: string, enum: [ELIG, PHQ9, GAD7, DASI, EQ5D5L, BRIDGE, CCSPS, PHASE, THR, ADHERENCE, MONITORING, ALERTS, LABS] }
+    CalcTrace:
+      type: array
+      description: Every input (with its source record), each intermediate step and the output, in order. Enough for a monitor to re-derive the number by hand.
+      items:
+        type: object
+        properties:
+          step: { type: string, example: hrr }
+          formula: { type: string, example: 'hr_max − resting_hr' }
+          inputs: { type: object, additionalProperties: true, example: { hr_max: 162, resting_hr: 68 } }
+          source_records: { type: array, items: { type: string }, example: ['daily_activity:2026-09-24..2026-09-30'] }
+          value: {}
+          rounded: {}
+    CalculationResult:
+      type: object
+      properties:
+        engine: { $ref: '#/components/schemas/EngineCode' }
+        config_version: { type: string }
+        config_status: { type: string, enum: [draft, active, retired], description: 'Draft results are for testing only and are never stored as outcomes' }
+        result: { type: object, additionalProperties: true }
+        trace: { $ref: '#/components/schemas/CalcTrace' }
+        warnings: { type: array, items: { type: string }, example: ['PROPOSED rule: mental-health mapping awaiting sign-off'] }
+    ScoringConfig:
+      type: object
+      properties:
+        id: { type: integer }
+        engine: { $ref: '#/components/schemas/EngineCode' }
+        version: { type: string }
+        params: { type: object }
+        status: { type: string, enum: [draft, active, retired] }
+        approved_by_pi: { type: string, nullable: true }
+        approved_by_statistician: { type: string, nullable: true }
+        effective_from: { type: string, format: date, nullable: true }
+        change_reason: { type: string }
+    VitalReading:
+      type: object
+      required: [client_uuid, kind, value_1, unit, measured_at, source]
+      properties:
+        client_uuid: { type: string, format: uuid }
+        kind: { type: string, enum: [bp, resting_hr, hr, hrv_sdnn, spo2, weight, glucose_fasting, glucose_post_meal, temperature] }
+        value_1: { type: number, description: SBP / HR / SpO2 / kg / mg/dL }
+        value_2: { type: number, nullable: true, description: DBP }
+        value_3: { type: number, nullable: true, description: Pulse from cuff }
+        unit: { type: string }
+        measured_at: { type: string, format: date-time }
+        source: { type: string, enum: [manual, ble_omron, health_connect, healthkit] }
+    SyncBatch:
+      type: object
+      properties:
+        device_time: { type: string, format: date-time, description: Used to detect clock skew }
+        vitals: { type: array, items: { $ref: '#/components/schemas/VitalReading' } }
+        daily_activity:
+          type: array
+          items:
+            type: object
+            required: [activity_date, source]
+            properties:
+              activity_date: { type: string, format: date }
+              steps: { type: integer }
+              distance_m: { type: integer }
+              active_minutes: { type: integer }
+              avg_mets: { type: number }
+              wear_minutes: { type: integer }
+              source: { type: string, enum: [health_connect, healthkit, manual] }
+        sleep:
+          type: array
+          items:
+            type: object
+            required: [client_uuid, start_at, end_at, source]
+            properties:
+              client_uuid: { type: string, format: uuid }
+              start_at: { type: string, format: date-time }
+              end_at: { type: string, format: date-time }
+              deep_min: { type: integer }
+              light_min: { type: integer }
+              rem_min: { type: integer }
+              awake_min: { type: integer }
+              source: { type: string, enum: [health_connect, healthkit, manual] }
+        exercise_sessions:
+          type: array
+          items:
+            type: object
+            required: [client_uuid, session_type, started_at, duration_min]
+            properties:
+              client_uuid: { type: string, format: uuid }
+              session_type: { type: string, enum: [aerobic, resistance, breathing, flexibility, other] }
+              started_at: { type: string, format: date-time }
+              duration_min: { type: integer }
+              avg_hr: { type: integer }
+              max_hr: { type: integer }
+              hr_samples: { type: array, items: { type: integer }, description: Optional 1/min samples for time-in-zone }
+              rpe: { type: integer }
+              rpe_scale: { type: string, enum: [borg_6_20], default: borg_6_20, description: 'The app collects Borg 6–20 only (care plans use RPE 11–13)' }
+              pain_vas: { type: integer, minimum: 0, maximum: 10 }
+              care_plan_id: { type: integer }
+        symptoms:
+          type: array
+          items:
+            type: object
+            required: [client_uuid, log_date]
+            properties:
+              client_uuid: { type: string, format: uuid }
+              log_date: { type: string, format: date }
+              chest_pain: { type: integer, minimum: 0, maximum: 3 }
+              breathlessness: { type: integer, minimum: 0, maximum: 3 }
+              palpitations: { type: integer, minimum: 0, maximum: 3 }
+              dizziness: { type: integer, minimum: 0, maximum: 3 }
+              ankle_swelling: { type: integer, minimum: 0, maximum: 3 }
+              fatigue: { type: integer, minimum: 0, maximum: 3 }
+              fever: { type: integer, minimum: 0, maximum: 3 }
+              cough: { type: integer, minimum: 0, maximum: 3 }
+              note: { type: string }
+        medication_doses:
+          type: array
+          items:
+            type: object
+            required: [client_uuid, medication_id, dose_date, slot, status]
+            properties:
+              client_uuid: { type: string, format: uuid }
+              medication_id: { type: integer }
+              dose_date: { type: string, format: date }
+              slot: { type: string, enum: [morning, afternoon, evening, night] }
+              status: { type: string, enum: [taken, skipped] }
+              recorded_at: { type: string, format: date-time }
+        daily_logs:
+          type: array
+          items:
+            type: object
+            required: [log_date]
+            properties:
+              log_date: { type: string, format: date }
+              tasks_done: { type: object, additionalProperties: { type: boolean } }
+              fluid_glasses: { type: integer, minimum: 0, maximum: 20 }
+              meals: { type: object, additionalProperties: { type: boolean } }
+              nutrition_adherence: { type: object, additionalProperties: { type: boolean } }
+              note: { type: string }
+        labs: { type: array, items: { $ref: '#/components/schemas/LabResultInput' } }
+        engagement:
+          type: array
+          items:
+            type: object
+            properties:
+              metric_date: { type: string, format: date }
+              app_opens: { type: integer }
+              edu_minutes: { type: integer }
+    SyncResult:
+      type: object
+      properties:
+        server_time: { type: string, format: date-time }
+        accepted: { type: integer }
+        duplicates: { type: integer }
+        rejected:
+          type: array
+          items:
+            type: object
+            properties:
+              client_uuid: { type: string }
+              collection: { type: string }
+              code: { type: string, enum: [out_of_range, too_old, future_timestamp, unknown_medication, invalid] }
+              message: { type: string }
+        alerts_raised: { type: integer, description: Count only; details never sent to the participant }
