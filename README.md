@@ -4,11 +4,16 @@
 > in `archive/core-php-api/` (case-number sign-in, MFA and calculation test vectors to port later).
 > Built admin assets are not committed: run `npm run build` in `apps/admin/` (outputs to `apps/api/public/admin`).
 
-Admin system for the SMART-HEART trial at Sri Ramachandra Medical Centre: staff sign-in, roles matrix, audit trail, and the eCRF from registration to consent (REG-01 → SCR-01 → CON-01).
+Software for the SMART-HEART trial at Sri Ramachandra Medical Centre: the eCRF / research database (replaces REDCap), the clinician admin panel, and the participant Android app.
+
+- **Phase 1** — staff sign-in, roles matrix, audit trail, REG-01 → SCR-01 → CON-01, export, backups.
+- **Phase 2** — BL-01 baseline (8 modules), PRO-01 questionnaires with tablet self-entry, PHQ-9 item-9 safety alerts, SAF-01, RAND-01 randomisation with blinding, CCSPS score, WD-01 withdrawal. See §7.
+- **Phase 3** — participant app (Firebase SMS sign-in, caregiver view, medicines and reminders, home readings with offline sync, education/FAQ, push) and its admin screens. See §8 and `apps/mobile/README.md`.
 
 ```
 apps/api/      Laravel 13 (PHP 8.3+) — API, database, eCRF rules. Serves the admin panel at /admin
 apps/admin/    React + Vite source for the admin panel (npm run build → apps/api/public/admin)
+apps/mobile/   React Native (Expo) participant app, Android only
 docs/          calculation specification, design mockups
 archive/       earlier core-PHP API (reference only)
 ```
@@ -138,7 +143,7 @@ php artisan serve                       # http://127.0.0.1:8000
 cd apps/admin && npm install && npm run dev  # http://localhost:5173/admin/
 npm run build                           # rebuilds into apps/api/public/admin
 ```
-Tests: `cd apps/api && php artisan test` (17 tests: eligibility rules, gating, signing, unlock order, reason-for-change, audit immutability, permissions, lockout, de-identified export).
+Tests: `cd apps/api && php artisan test` (136 tests, including the 102 calculation vectors from `docs/calculation-specification.md`). Mobile: `cd apps/mobile && npm test`.
 
 ---
 
@@ -155,5 +160,49 @@ Tests: `cd apps/api && php artisan test` (17 tests: eligibility rules, gating, s
 
 ---
 
-## 6. Not in Phase 1 (next)
-BL-01 baseline modules · PRO-01 tablet self-entry (DHRx, PHQ-9, GAD-7, EQ-5D-5L, DASI, MARS-5) · SAF-01 · RAND-01 · FU-01 · AE/MACE/withdrawal · intervention monitoring dashboard · control-arm web links · mobile app (React Native, Health Connect, Firebase OTP).
+## 6. Not built yet
+FU-01 follow-up visits · AE / MACE reporting · intervention monitoring dashboard · control-arm one-time web links · Health Connect sync (Mi Fitness, OMRON connect) and watch data in the app · PRO-DHRx (needs the DHRx manual).
+
+---
+
+## 7. Phase 2 — baseline to randomisation
+
+| Area | Behaviour |
+|---|---|
+| BL-01 | Modules 1–8 open after consent. Calculations (BMI, mean BP, LDL/HbA1c unit conversion, Friedewald LDL, CKD-EPI 2021 eGFR, DAPT/statin flags) run on the server. |
+| PRO-01 | PHQ-9, GAD-7, DASI built in (English, public domain). EQ-5D-5L and MARS-5 stay locked until the licensed wording is pasted in **Questionnaire texts**; Tamil versions likewise. Nothing is invented in code. |
+| Tablet self-entry | From the questionnaire page, staff start a 60-minute session; the tablet signs staff out, shows only that questionnaire in the participant's language, never shows a score, and locks on submit. |
+| Safety alerts | PHQ-9 item 9 > 0 (any total) → critical alert, emailed to `ALERT_CRITICAL_EMAILS`, escalated after `ALERT_ESCALATE_AFTER_HOURS` if not acknowledged; the participant sees Tele-MANAS 14416 and the coordinator number. PHQ-9 / GAD-7 ≥ 10 → review alert. Closing needs a note. |
+| SAF-01 | PI checklist with an automatic baseline summary; clearance = No defers randomisation. |
+| Randomisation | Upload the statistician's CSV (`stratum,seq_no,block_no,arm`; strata `lt60`/`ge60`). Blocks must be 1:1 and sequences gap-free. Randomise from the participant record with your password; the next row of the age stratum (age on the randomisation date) is used, under a lock, and cannot be undone. Roles without **See allocated arm** see "blinded" everywhere, and the audit trail records the list row, never the arm. |
+| CCSPS | Each domain scores only under a PI-approved threshold version (**CCSPS thresholds**); otherwise it is pending, never 0. |
+
+The scheduler (Step 7 cron) also runs the alert escalation every 5 minutes.
+
+---
+
+## 8. Phase 3 — participant app
+
+How it works: after randomisation to the intervention arm, staff open the participant record → **Participant app** → *Enable app*, review the medicine list drafted from BL-M6 and *Publish*, and (if consent allows) add up to two caregivers with their own mobile numbers. The participant installs the app, chooses Tamil or English, enters the Participant ID and their registered mobile number, and types the SMS code. Caregivers do the same with their own number and get a view-only app with a "Seen" button.
+
+| Area | Behaviour |
+|---|---|
+| Sign-in | Firebase phone OTP on the phone; the server checks the Firebase ID token (signature, project, expiry) and that the number matches the participant's record or a nominated caregiver. Then the app uses its own token (90 days, renewed on use). Withdrawal, a control-arm allocation or *Remove access* ends access at once. |
+| Medicines | Only the list staff publish is shown (versioned, audited). Reminders are local notifications at the participant's chosen times, so they work offline; the lock screen never shows medicine names. Taken / skipped answers are stored with the list version. |
+| Readings | BP, sugar, weight typed in the app (Health Connect in a later phase), with measured and uploaded times and the source. Readings beyond `APP_ALERT_*` raise a warning alert for the study team, and the app tells the participant to call 108 if unwell. |
+| Offline | Every answer and reading is saved on the phone first and sent when online; repeats are ignored by the server, so nothing is counted twice. |
+| Content | **App education & FAQ** (admin): English and Tamil. Tamil is shown only after a native speaker ticks *Tamil reviewed*. |
+| Push | FCM, generic text only (`FIREBASE_CREDENTIALS`). Without it, everything except push works. |
+| Export | **Export** → *App readings* / *App medicine doses* give long-format CSVs. |
+
+New permissions in **Roles & permissions**: *App access, medicine list, readings & doses* and *Education & FAQ content* (PI role gets both; Cardiologist gets read on app data). The app screens also need *See allocated arm*, because only the intervention arm uses the app.
+
+### Firebase set-up (once)
+1. Create a Firebase project → **Authentication → Sign-in method → Phone** → enable. Add a few test numbers for training.
+2. **Project settings → Your apps → Add app → Android**, package `in.ac.sriramachandra.smartheart`; add the SHA-1 and SHA-256 of the app signing key (from `eas credentials`). Download `google-services.json` into `apps/mobile/` (not committed).
+3. **Project settings → Service accounts → Generate new private key**. Upload the JSON to the server outside `public_html` and set `FIREBASE_CREDENTIALS` to its full path. Set `FIREBASE_PROJECT_ID`.
+
+### Before giving the app to participants
+- Native Tamil review of all app wording (`apps/mobile/src/i18n.js`, `PushService::TEXTS`, the self-entry page) — marked DRAFT in the code.
+- PI approval of the reading-alert limits (`APP_ALERT_*`) and the two "call 108" messages.
+- Education/FAQ content written and approved.

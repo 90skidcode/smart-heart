@@ -133,6 +133,7 @@ class AppController extends Controller
 
         return response()->json([
             'date' => $date,
+            'schedule_version' => MedSchedule::where('participant_id', $u->participant_id)->max('version'),
             'doses' => $this->app->dayPlan($u, $date),
             'readings' => $readings->map(fn ($r) => $this->readingRow($r))->values(),
             'seen_by' => $seen->values(),
