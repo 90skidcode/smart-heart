@@ -1,9 +1,7 @@
 # SMART-HEART eCRF — Phase 1 (Laravel)
 
-> **Branch note.** This folder is a separate Laravel 13 implementation of eCRF Phase 1, built outside the monorepo's
-> core-PHP API (`apps/api`). It does **not** follow the repo rules in `/CLAUDE.md` (no framework, calculations in
-> `apps/api/src/Calc` against `packages/contracts/test_vectors.json`, endpoints per `openapi.yaml`). It lives on this
-> branch only, for review, until the team decides whether to port its eCRF logic into `apps/api` or use it as is.
+> **Stack decision (6 Oct 2026):** the eCRF and admin system are built in **Laravel 13 + Vite React**, as in this
+> folder. The core-PHP API in `apps/api` and the "no framework" rule in `/CLAUDE.md` predate this decision.
 > Built admin assets are not committed: run `npm run build` in `admin/` (outputs to `api/public/admin`).
 
 Admin system for the SMART-HEART trial at Sri Ramachandra Medical Centre: staff sign-in, roles matrix, audit trail, and the eCRF from registration to consent (REG-01 → SCR-01 → CON-01).
