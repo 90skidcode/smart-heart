@@ -12,6 +12,7 @@ export default function Export() {
   const [type, setType] = useState(canDe ? 'deidentified' : 'identified');
   const [armCoding, setArmCoding] = useState('ab');
   const [arm, setArm] = useState('all');
+  const [dataset, setDataset] = useState('participants');
   const [err, setErr] = useState(null);
 
   if (!canIdent && !canDe) return <div className="panel-page"><Alert kind="info" title="No export access for your role." /></div>;
@@ -19,7 +20,7 @@ export default function Export() {
   const go = async (what) => {
     setErr(null);
     try {
-      const name = await download(`/export/${what}${qs({ type, arm_coding: armCoding, arm })}`);
+      const name = await download(`/export/${what}${qs({ type, arm_coding: armCoding, arm, dataset: what === 'data' && dataset !== 'participants' ? dataset : undefined })}`);
       toast(`Downloaded ${name}`);
     } catch (ex) {
       setErr(ex.message);
@@ -50,7 +51,15 @@ export default function Export() {
         </div>
       </Section>
 
-      <Section num="2" title="Arm">
+      <Section num="2" title="Data set">
+        <div className="radio-group">
+          <Opt v="participants" cur={dataset} set={setDataset} title="eCRF — one row per participant" desc="All forms, same field names as the eCRF." />
+          <Opt v="readings" cur={dataset} set={setDataset} title="App readings — one row per reading" desc="BP, sugar and weight from the app, with source (typed / Health Connect), device, measured and uploaded times." />
+          <Opt v="doses" cur={dataset} set={setDataset} title="App medicine doses — one row per answered dose" desc="Taken / skipped, with the medicine-list version." />
+        </div>
+      </Section>
+
+      <Section num="3" title="Arm">
         <div className="field-grid">
           <div className="field">
             <label className="field-label">Arm coding</label>
@@ -73,7 +82,7 @@ export default function Export() {
       {type === 'identified' && <Alert kind="warn" title="Identified data">This file contains personal details. Do not email it or copy it to personal devices.</Alert>}
       {err && <div className="field-error">{err}</div>}
       <div className="nav-strip">
-        <button className="btn-secondary" onClick={() => go('dictionary')}>⇩ Data dictionary (CSV)</button>
+        <button className="btn-secondary" disabled={dataset !== 'participants'} onClick={() => go('dictionary')}>⇩ Data dictionary (CSV)</button>
         <button className="btn-nav btn-next" onClick={() => go('data')}>⇩ Download data (CSV)</button>
       </div>
     </div>

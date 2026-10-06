@@ -6,7 +6,8 @@ import { Empty, fmtDateTime } from '../components/Bits';
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 
-const RULE = { PHQ9_ITEM9: 'PHQ-9 item 9 (self-harm thoughts)', PHQ9_GE10: 'PHQ-9 ≥ 10', GAD7_GE10: 'GAD-7 ≥ 10' };
+const RULE = { PHQ9_ITEM9: 'PHQ-9 item 9 (self-harm thoughts)', PHQ9_GE10: 'PHQ-9 ≥ 10', GAD7_GE10: 'GAD-7 ≥ 10',
+  BP_HIGH: 'Home BP high', BP_LOW: 'Home BP low', GLUCOSE_HIGH: 'Blood sugar high', GLUCOSE_LOW: 'Blood sugar low' };
 
 export default function Alerts() {
   const { can } = useAuth();

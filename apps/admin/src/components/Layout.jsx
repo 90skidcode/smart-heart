@@ -73,13 +73,14 @@ export default function Layout({ children }) {
               {can('audit') && <Item to="/audit" icon="🔍" label="Audit trail" />}
             </div>
           )}
-          {(can('users') || can('roles') || can('instruments') || can('scoring')) && (
+          {(can('users') || can('roles') || can('instruments') || can('scoring') || can('content')) && (
             <div className="sb-section">
               <div className="sb-label">Administration</div>
               {can('users') && <Item to="/users" icon="👤" label="Users" />}
               {can('roles') && <Item to="/roles" icon="🔐" label="Roles & permissions" />}
               {can('instruments') && <Item to="/instruments" icon="✎" label="Questionnaire texts" />}
               {can('scoring') && <Item to="/scoring" icon="∑" label="CCSPS thresholds" />}
+              {can('content') && <Item to="/content" icon="📖" label="App education & FAQ" />}
             </div>
           )}
           <div className="sb-foot">All times in IST · Every change is recorded in the audit trail.</div>

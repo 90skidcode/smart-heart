@@ -14,6 +14,7 @@ import Export from './pages/Export';
 import NoAccess from './pages/NoAccess';
 import SelfEntry from './pages/SelfEntry';
 import Alerts from './pages/Alerts';
+import Content from './pages/Content';
 import Instruments from './pages/Instruments';
 import Scoring from './pages/Scoring';
 import Randomisation from './pages/Randomisation';
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/export" element={<Export />} />
         <Route path="/alerts" element={<Guard screen="alerts"><Alerts /></Guard>} />
         <Route path="/instruments" element={<Guard screen="instruments"><Instruments /></Guard>} />
+        <Route path="/content" element={<Guard screen="content"><Content /></Guard>} />
         <Route path="/scoring" element={<Guard screen="scoring"><Scoring /></Guard>} />
         <Route path="/randomisation" element={<Guard screen="randomisation"><Randomisation /></Guard>} />
         <Route path="/change-password" element={<ChangePassword />} />

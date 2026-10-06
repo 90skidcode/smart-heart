@@ -442,10 +442,24 @@ textarea.field-input { resize: vertical; }
 .se-support { text-align: left; background: var(--gdp); border: 2px solid var(--gd); border-radius: 12px; padding: 14px 16px; margin: 12px 0; white-space: pre-line; line-height: 1.5; }
 .se-hand { color: var(--g600); font-size: 16px; }
 
+
+/* ── PHASE 3: participant app ── */
+.app-users { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.app-user { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 10px; align-items: center; border: 1.5px solid var(--g100); border-radius: 10px; padding: 10px 12px; }
+.app-user.revoked { opacity: .6; }
+.app-user small { display: block; font-size: 11.5px; color: var(--g600); margin-top: 2px; }
+.app-user .mono-tag { margin-left: 8px; }
+.med-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.med-list small { display: block; color: var(--g600); font-size: 11.5px; }
+.ptable-head.content, .ptable-row.content { grid-template-columns: 2fr 140px 120px 150px 220px; }
+.content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.modal.wide .table-field td { min-width: 80px; }
+
 @media (max-width: 1200px) {
   .stat-grid { grid-template-columns: repeat(3, 1fr); }
   .ccsps-total, .strata { grid-template-columns: 1fr 1fr; }
   .alert-card { flex-direction: column; }
+  .app-user, .content-grid { grid-template-columns: 1fr; }
   .ac-actions { flex-direction: row; }
   .se-scale-grid { grid-template-columns: repeat(4, 1fr); }
   .panel-page.with-side { grid-template-columns: 1fr; }

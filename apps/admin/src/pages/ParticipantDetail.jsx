@@ -6,6 +6,7 @@ import { Alert, ArmTag, FormStatus, StatusPill, fmtDate, fmtDateTime } from '../
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 import RandomisePanel from '../components/RandomisePanel';
+import AppPanel from '../components/AppPanel';
 import CcspsPanel from '../components/CcspsPanel';
 
 const GROUPS = ['Screening', 'Consent', 'Baseline', 'PROs', 'Safety', 'Study status'];
@@ -136,6 +137,7 @@ export default function ParticipantDetail() {
       {['consented', 'ready_to_randomise', 'safety_deferred', 'randomised', 'withdrawn'].includes(p.status) && can('ccsps') && (
         <CcspsPanel pid={p.id} />
       )}
+      {p.status === 'randomised' && p.arm === 'intervention' && can('app_access') && can('view_allocation') && <AppPanel pid={p.id} />}
       {can('audit') && <Link className="btn-link" to={`/audit?participant_id=${p.id}`}>View this participant's audit trail →</Link>}
 
       {edit && <EditIdentity p={p} onClose={() => setEdit(false)} onSaved={(np) => { setP(np); setEdit(false); toast('Identity updated'); }} />}
