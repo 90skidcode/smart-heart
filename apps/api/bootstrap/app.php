@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AuthenticateAppToken;
 use App\Http\Middleware\AuthenticateToken;
 use App\Http\Middleware\RequireScreen;
 use Illuminate\Foundation\Application;
@@ -17,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'auth.token' => AuthenticateToken::class,
+            'auth.app' => AuthenticateAppToken::class,
             'screen' => RequireScreen::class,
         ]);
     })

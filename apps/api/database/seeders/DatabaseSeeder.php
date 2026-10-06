@@ -40,7 +40,7 @@ class DatabaseSeeder extends Seeder
             'Cardiologist' => [
                 'description' => 'View-only: study dashboard and intervention monitoring dashboard.',
                 'is_system' => false,
-                'perms' => $ro(['dashboard', 'participants', 'clinician_dashboard', 'alerts', 'ccsps', 'view_allocation']),
+                'perms' => $ro(['dashboard', 'participants', 'clinician_dashboard', 'alerts', 'ccsps', 'view_allocation', 'app_access']),
             ],
         ];
 

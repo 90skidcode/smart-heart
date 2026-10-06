@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SafetyAlert extends Model
 {
     protected $fillable = ['participant_id', 'rule', 'severity', 'source_form_id', 'summary', 'status', 'raised_at', 'notified_at',
-        'escalated_at', 'acknowledged_at', 'acknowledged_by', 'closed_at', 'closed_by', 'close_note'];
+        'source_reading_id', 'escalated_at', 'acknowledged_at', 'acknowledged_by', 'closed_at', 'closed_by', 'close_note'];
 
     protected function casts(): array
     {

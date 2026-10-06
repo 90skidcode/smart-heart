@@ -4,7 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Forms\FormRegistry;
 use App\Http\Controllers\Controller;
+use App\Models\AppUser;
+use App\Models\MedDoseLog;
+use App\Models\MedSchedule;
 use App\Models\Participant;
+use App\Models\Reading;
 use App\Support\Audit;
 use Illuminate\Http\Request;
 
@@ -27,6 +31,10 @@ class ExportController extends Controller
         [$type, $armCoding, $arm] = $this->options($request);
         if ($deny = $this->authorise($request, $type)) {
             return $deny;
+        }
+
+        if (in_array($request->query('dataset'), ['readings', 'doses'], true)) {
+            return $this->longExport($request->query('dataset'), $type, $armCoding, $arm);
         }
 
         $columns = $this->columns($type);
@@ -74,6 +82,41 @@ class ExportController extends Controller
             }
             fclose($out);
         }, "smartheart_data_dictionary_{$type}.csv", ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    /** App data in long format: one row per reading or per answered dose. */
+    private function longExport(string $dataset, string $type, string $armCoding, string $arm)
+    {
+        $codes = config('smartheart.arm_codes', ['intervention' => 'A', 'control' => 'B']);
+        $people = Participant::when($arm !== 'all', fn ($q) => $q->where('arm', $arm))->get()->keyBy('id');
+        $armOf = fn ($p) => $p?->arm ? ($armCoding === 'ab' ? $codes[$p->arm] : $p->arm) : '';
+        $roles = AppUser::pluck('role', 'id');
+        if ($dataset === 'readings') {
+            $head = ['study_id', 'arm', 'type', 'sbp', 'dbp', 'pulse', 'glucose_mg_dl', 'glucose_context', 'weight_kg', 'measured_at', 'uploaded_at', 'source', 'device', 'entered_by'];
+            $rows = Reading::whereIn('participant_id', $people->keys())->orderBy('participant_id')->orderBy('measured_at')->cursor()
+                ->map(fn ($r) => [$people[$r->participant_id]->study_id, $armOf($people[$r->participant_id]), $r->type, $r->values['sbp'] ?? '', $r->values['dbp'] ?? '',
+                    $r->values['pulse'] ?? '', $r->values['mg_dl'] ?? '', $r->values['context'] ?? '', $r->values['kg'] ?? '',
+                    $r->measured_at->toIso8601String(), $r->uploaded_at->toIso8601String(), $r->source, $r->device, $roles[$r->app_user_id] ?? '']);
+        } else {
+            $drugs = MedSchedule::whereIn('participant_id', $people->keys())->get()
+                ->flatMap(fn ($s) => collect($s->items)->mapWithKeys(fn ($m) => ["{$s->participant_id}|{$s->version}|{$m['key']}" => $m['drug'].' '.$m['dose']]));
+            $head = ['study_id', 'arm', 'schedule_version', 'med_key', 'medicine', 'dose_date', 'slot', 'status', 'answered_at', 'received_at', 'entered_by'];
+            $rows = MedDoseLog::whereIn('participant_id', $people->keys())->orderBy('participant_id')->orderBy('dose_date')->cursor()
+                ->map(fn ($d) => [$people[$d->participant_id]->study_id, $armOf($people[$d->participant_id]), $d->schedule_version, $d->med_key,
+                    $drugs["{$d->participant_id}|{$d->schedule_version}|{$d->med_key}"] ?? '', $d->dose_date, $d->slot, $d->status,
+                    $d->answered_at->toIso8601String(), $d->received_at->toIso8601String(), $roles[$d->app_user_id] ?? '']);
+        }
+        Audit::log('export', ['meta' => ['type' => $type, 'dataset' => $dataset, 'arm_coding' => $armCoding, 'arm_filter' => $arm]]);
+
+        return response()->streamDownload(function () use ($head, $rows) {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, $head);
+            foreach ($rows as $line) {
+                fputcsv($out, $line);
+            }
+            fclose($out);
+        }, "smartheart_{$dataset}_".now()->format('Ymd_His').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     // ------------------------------------------------------------------

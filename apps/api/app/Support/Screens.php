@@ -27,6 +27,8 @@ class Screens
         'alerts' => ['group' => 'Safety', 'label' => 'Safety alerts', 'write_label' => 'Acknowledge / close'],
         'sign_forms' => ['group' => 'eCRF control', 'label' => 'E-signature', 'write_label' => 'Sign forms (PI)'],
         'unlock_forms' => ['group' => 'eCRF control', 'label' => 'Unlock signed forms', 'write_label' => 'Unlock with reason'],
+        'app_access' => ['group' => 'Participant app', 'label' => 'App access, medicine list, readings & doses', 'write_label' => 'Enable app / caregivers / publish medicines'],
+        'content' => ['group' => 'Participant app', 'label' => 'Education & FAQ content', 'write_label' => 'Edit / publish'],
         'clinician_dashboard' => ['group' => 'Monitoring (Phase 2)', 'label' => 'Intervention monitoring dashboard', 'write_label' => 'Push care plans'],
         'control_arm' => ['group' => 'Monitoring (Phase 2)', 'label' => 'Control-arm follow-up', 'write_label' => 'Create / send links'],
         'export_deidentified' => ['group' => 'Data', 'label' => 'De-identified export', 'write_label' => null],

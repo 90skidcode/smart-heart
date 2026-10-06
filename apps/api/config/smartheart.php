@@ -58,6 +58,28 @@ return [
     ],
 
     // Reasons offered when a saved value is changed (free text allowed with "Other").
+    // Phase 3: participant app (intervention arm only).
+    'app' => [
+        'firebase_project_id' => env('FIREBASE_PROJECT_ID', ''),
+        // Service-account JSON for push (FCM HTTP v1). Keep outside public_html.
+        'firebase_credentials' => env('FIREBASE_CREDENTIALS', ''),
+        // Local development only: accept "dev:+91XXXXXXXXXX" instead of a Firebase token. Ignored in production.
+        'dev_login' => (bool) env('APP_DEV_LOGIN', false),
+        'token_days' => (int) env('APP_TOKEN_DAYS', 90),
+        'max_caregivers' => (int) env('APP_MAX_CAREGIVERS', 2),
+        'default_reminders' => ['Morning' => '08:00', 'Afternoon' => '13:00', 'Evening' => '18:00', 'Night' => '21:00'],
+        'dose_backfill_days' => 30,
+        'reading_backfill_days' => 90,
+        // Reading alerts to the study team (warning severity). PI to confirm thresholds before go-live.
+        'reading_alerts' => [
+            'bp_sbp_high' => (int) env('APP_ALERT_SBP_HIGH', 180),
+            'bp_dbp_high' => (int) env('APP_ALERT_DBP_HIGH', 110),
+            'bp_sbp_low' => (int) env('APP_ALERT_SBP_LOW', 90),
+            'glucose_high' => (int) env('APP_ALERT_GLUCOSE_HIGH', 300),
+            'glucose_low' => (int) env('APP_ALERT_GLUCOSE_LOW', 70),
+        ],
+    ],
+
     'change_reasons' => [
         'Transcription error',
         'Data entry correction',

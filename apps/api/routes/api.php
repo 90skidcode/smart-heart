@@ -1,6 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\AlertController;
+use App\Http\Controllers\Api\AppAdminController;
+use App\Http\Controllers\Api\ContentController;
+use App\Http\Controllers\App\AppController;
 use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
@@ -24,6 +27,23 @@ Route::middleware('throttle:self-entry')->group(function () {
     Route::get('self-entry/{token}', [SelfEntryController::class, 'show']);
     Route::put('self-entry/{token}', [SelfEntryController::class, 'save']);
     Route::post('self-entry/{token}/submit', [SelfEntryController::class, 'submit']);
+});
+
+// Participant app (Phase 3). Activation = Firebase phone OTP + Participant ID.
+Route::post('app/activate', [AppController::class, 'activate'])->middleware('throttle:app-activate');
+Route::middleware(['auth.app', 'throttle:app'])->prefix('app')->group(function () {
+    Route::get('me', [AppController::class, 'me']);
+    Route::put('me', [AppController::class, 'updateMe']);
+    Route::post('logout', [AppController::class, 'logout']);
+    Route::post('devices', [AppController::class, 'device']);
+    Route::get('today', [AppController::class, 'today']);
+    Route::get('medications', [AppController::class, 'medications']);
+    Route::get('doses', [AppController::class, 'doses']);
+    Route::get('readings', [AppController::class, 'readings']);
+    Route::get('content', [AppController::class, 'content']);
+    Route::post('seen', [AppController::class, 'seen']);
+    Route::post('doses', [AppController::class, 'saveDoses'])->middleware('auth.app:write');
+    Route::post('readings', [AppController::class, 'saveReadings'])->middleware('auth.app:write');
 });
 
 Route::middleware('auth.token')->group(function () {
@@ -68,6 +88,17 @@ Route::middleware('auth.token')->group(function () {
     Route::get('scoring-configs', [ScoringConfigController::class, 'index'])->middleware('screen:scoring');
     Route::post('scoring-configs', [ScoringConfigController::class, 'store'])->middleware('screen:scoring,write');
     Route::post('scoring-configs/{config}/approve', [ScoringConfigController::class, 'approve'])->middleware(['screen:scoring,write', 'screen:sign_forms,write']);
+
+    Route::get('participants/{participant}/app', [AppAdminController::class, 'show'])->middleware('screen:app_access');
+    Route::post('participants/{participant}/app/enable', [AppAdminController::class, 'enable'])->middleware('screen:app_access,write');
+    Route::post('participants/{participant}/app/caregivers', [AppAdminController::class, 'addCaregiver'])->middleware('screen:app_access,write');
+    Route::post('participants/{participant}/app/medications', [AppAdminController::class, 'publishMeds'])->middleware('screen:app_access,write');
+    Route::post('app-users/{appUser}/revoke', [AppAdminController::class, 'revoke'])->middleware('screen:app_access,write');
+
+    Route::get('content', [ContentController::class, 'index'])->middleware('screen:content');
+    Route::post('content', [ContentController::class, 'store'])->middleware('screen:content,write');
+    Route::put('content/{content}', [ContentController::class, 'update'])->middleware('screen:content,write');
+    Route::post('content/{content}/status', [ContentController::class, 'publish'])->middleware('screen:content,write');
 
     Route::get('audit', [AuditController::class, 'index'])->middleware('screen:audit');
     Route::get('audit/download', [AuditController::class, 'download'])->middleware('screen:audit');
