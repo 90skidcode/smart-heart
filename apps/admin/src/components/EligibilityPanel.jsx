@@ -1,42 +1,23 @@
 const ICON = {
-  met: ['✓', 'es-ok', 'Met'], absent: ['✓', 'es-ok', 'Absent'],
-  not_met: ['✕', 'es-fail', 'Not met'], present: ['✕', 'es-fail', 'Present'],
+  pass: ['✓', 'es-ok', 'Pass'],
+  'n/a': ['–', 'es-na', 'Not applicable'],
+  fail: ['✕', 'es-fail', 'Excludes'],
   pending: ['…', 'es-pend', 'Pending'],
+  not_evaluated: ['·', 'es-na', 'Not evaluated'],
 };
+const SCREENS = { 1: 'Age', 2: 'Diagnosis', 3: 'PCI', 4: 'CABG', 5: 'High-risk cardiac', 6: 'Diabetes / renal / BP', 7: 'Sensory & cognitive', 8: 'Digital access' };
 
-function Rows({ items, head }) {
-  return (
-    <div className="elig-table">
-      <div className="elig-head"><span>{head}</span><span>Status</span></div>
-      {items.map((c) => {
-        const [ico, cls, word] = ICON[c.status];
-        return (
-          <div className="elig-row" key={c.code}>
-            <div className="elig-criterion">
-              {c.label}
-              <span className="elig-code">{c.code}</span>
-            </div>
-            <div className={`elig-status ${cls}`} title={c.detail || ''}>
-              {ico} {c.detail ? c.detail : word}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Live eligibility summary for SCR-01, computed by the server's EligibilityEngine. */
+/** Live SCR-01 eligibility, computed on the server by ELIG-1.0 (App\Calc\Calc::eligibility). */
 export default function EligibilityPanel({ elig, compact }) {
   if (!elig) return null;
-  const inc = elig.criteria.filter((c) => c.kind === 'inclusion');
-  const exc = elig.criteria.filter((c) => c.kind === 'exclusion');
   const banner = {
-    ELIGIBLE: ['alert-ok', '🟢', 'ELIGIBLE', 'All inclusion criteria met and no exclusion criteria found. Mark complete and sign to unlock consent.'],
-    NOT_ELIGIBLE: ['alert-fail', '🔴', 'NOT ELIGIBLE — screen failure', 'An exclusion was found. You can stop here: mark the form complete and sign it to record the screen failure. Remaining fields are not required.'],
-    INCOMPLETE: ['alert-warn', '🟡', 'INCOMPLETE', 'Some criteria are still pending or answered "Unknown". The form cannot be signed until they are resolved.'],
+    ELIGIBLE: ['alert-ok', '🟢', 'ELIGIBLE', 'All criteria pass. Mark complete and sign to unlock consent.'],
+    NOT_ELIGIBLE: ['alert-fail', '🔴', `NOT ELIGIBLE — stops at screen ${elig.stop_at_screen}`, 'An exclusion was found, so later criteria are not evaluated. You can stop here: mark the form complete and sign it to record the screen failure.'],
+    INCOMPLETE: ['alert-warn', '🟡', 'PENDING', 'Some criteria are missing, answered "Unknown", or need PI review (e.g. high BP while untreated). The form cannot be signed until they are resolved.'],
   }[elig.status];
-  const fails = elig.criteria.filter((c) => c.status === 'not_met' || c.status === 'present');
+  const fails = elig.criteria.filter((c) => c.status === 'fail');
+  const pend = elig.criteria.filter((c) => c.status === 'pending');
+  const screens = [...new Set(elig.criteria.map((c) => c.screen))];
 
   return (
     <div className={`elig-panel ${compact ? 'compact' : ''}`}>
@@ -45,15 +26,30 @@ export default function EligibilityPanel({ elig, compact }) {
         <div className="alert-body">
           <div className="alert-title" style={{ fontSize: 14 }}>{banner[2]}</div>
           <div className="alert-desc">{banner[3]}</div>
-          {fails.length > 0 && (
+          {(fails.length > 0 || pend.length > 0) && (
             <ul className="fail-list">
-              {fails.map((f) => <li key={f.code}>{f.label}{f.detail ? ` — ${f.detail}` : ''}</li>)}
+              {[...fails, ...pend].map((f) => <li key={f.code}>{f.label}{f.detail ? ` — ${f.detail}` : ''}</li>)}
             </ul>
           )}
         </div>
       </div>
-      <Rows items={inc} head="Inclusion criterion" />
-      <Rows items={exc} head="Exclusion criterion" />
+      <div className="elig-table">
+        <div className="elig-head"><span>Criterion ({elig.engine})</span><span>Status</span></div>
+        {screens.map((s) => (
+          <div key={s}>
+            <div className="elig-screen">Screen {s} · {SCREENS[s]}</div>
+            {elig.criteria.filter((c) => c.screen === s).map((c) => {
+              const [ico, cls, word] = ICON[c.status] || ['?', '', c.status];
+              return (
+                <div className="elig-row" key={c.code}>
+                  <div className="elig-criterion">{c.label}<span className="elig-code">{c.code}</span></div>
+                  <div className={`elig-status ${cls}`} title={c.detail || ''}>{ico} {c.status === 'pass' || c.status === 'fail' ? (c.detail || word) : word}</div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

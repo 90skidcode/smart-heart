@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api, setAuthLostHandler, token } from './api';
 
 const AuthCtx = createContext(null);
+/** Tablet self-entry pages never use a staff session. */
+export const isSelfEntryPage = () => window.location.pathname.startsWith('/admin/entry/');
 export const useAuth = () => useContext(AuthCtx);
 
 export function AuthProvider({ children }) {
@@ -20,6 +22,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     setAuthLostHandler((message, where) => {
+      if (isSelfEntryPage()) {
+        setState({ loading: false, me: null, notice: null });
+        return;
+      }
       if (where === 'change-password') {
         navigate('/change-password');
         return;
@@ -27,7 +33,7 @@ export function AuthProvider({ children }) {
       setState({ loading: false, me: null, notice: message });
       navigate('/login');
     });
-    if (token.get()) loadMe();
+    if (token.get() && !isSelfEntryPage()) loadMe();
   }, [loadMe, navigate]);
 
   const login = async (email, password) => {
@@ -46,10 +52,19 @@ export function AuthProvider({ children }) {
     navigate('/login');
   };
 
+  /** Sign staff out on this device without leaving the page (used when handing the tablet to a participant). */
+  const forget = async () => {
+    try {
+      if (token.get()) await api('/auth/logout', { method: 'POST' });
+    } catch { /* already gone */ }
+    token.clear();
+    setState({ loading: false, me: null, notice: null });
+  };
+
   const can = (screen, level = 'read') => !!state.me?.permissions?.[screen]?.[level];
 
   return (
-    <AuthCtx.Provider value={{ ...state, login, logout, can, setMe: (me) => setState((s) => ({ ...s, me })) }}>
+    <AuthCtx.Provider value={{ ...state, login, logout, forget, can, setMe: (me) => setState((s) => ({ ...s, me })) }}>
       {children}
       {state.me && <IdleGuard minutes={state.me.idle_minutes || 15} onTimeout={() => logout('You were signed out after a period of inactivity.')} />}
     </AuthCtx.Provider>

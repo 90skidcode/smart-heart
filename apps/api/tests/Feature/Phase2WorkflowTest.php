@@ -239,6 +239,16 @@ class Phase2WorkflowTest extends TestCase
         $this->assertSame(1, $c->json('total.domains_scored'));
     }
 
+    public function test_rate_limits_do_not_share_one_counter(): void
+    {
+        // Tablet autosaves from the hospital's shared IP must not use up the randomise/sign/login limits.
+        for ($i = 0; $i < 15; $i++) {
+            $this->getJson('/api/self-entry/not-a-token')->assertStatus(404);
+        }
+        $this->api()->postJson("/api/participants/{$this->pid}/randomise", ['password' => $this->pw])->assertStatus(422); // blockers, not 429
+        $this->postJson('/api/auth/login', ['email' => 'pi@test.local', 'password' => $this->pw])->assertOk();
+    }
+
     public function test_withdrawal_locks_record(): void
     {
         $this->form('WD-01', ['WD_DATE' => now()->toDateString(), 'WD_TYPE' => 'Participant withdrew consent', 'WD_REASON' => 'Moving away',

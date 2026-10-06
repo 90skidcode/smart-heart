@@ -8,8 +8,10 @@ import FormRenderer from '../components/FormRenderer';
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 import { useDefinitions } from '../hooks';
+import SelfEntryPanel from '../components/SelfEntryPanel';
 
-const screenKey = (code) => `form_${code.replace('-', '').toLowerCase()}`;
+// Mirrors FormRegistry::screenKey on the server.
+const screenKey = (code) => (code.startsWith('BL-') ? 'form_baseline' : code.startsWith('PRO-') ? 'form_pro' : `form_${code.replace('-', '').toLowerCase()}`);
 
 function labelOf(def, code) {
   for (const s of def.sections) for (const f of s.fields) if (f.code === code) return f.label;
@@ -129,7 +131,7 @@ export default function FormPage() {
       const nd = { ...d, [k]: v };
       clearTimeout(previewTimer.current);
       previewTimer.current = setTimeout(() => {
-        api(`/forms/${code}/preview`, { method: 'POST', body: { data: nd } })
+        api(`/forms/${code}/preview`, { method: 'POST', body: { data: nd, participant_id: Number(id) } })
           .then((r) => { setCheck(r); if (r.eligibility) setElig(r.eligibility); })
           .catch(() => {});
       }, 350);
@@ -244,6 +246,11 @@ export default function FormPage() {
         {form.status === 'complete' && !readOnly && (
           <Alert kind="warn" title="Form is complete">Any change from now on asks for a reason for change. Sign the form to lock it.</Alert>
         )}
+
+        {form.self_entry && !signed && form.status !== 'complete' && !locked && (
+          <SelfEntryPanel pid={id} code={code} info={form.self_entry} canStart={can('form_pro', 'write')} />
+        )}
+        {form.self_entry && <div className="field-note" style={{ margin: '-4px 0 10px' }}>Source: {form.self_entry.source}. Staff entry below is for paper-form transcription only.</div>}
 
         <FormRenderer def={def} data={data} onChange={onChange} readOnly={readOnly} computed={check?.computed || form.computed}
           check={check} overrides={overrides} onOverride={onOverride} highlight={needReasons || []} />

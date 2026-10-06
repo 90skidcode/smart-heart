@@ -17,10 +17,10 @@ use Illuminate\Support\Facades\Route;
 
 // All routes here are prefixed with /api.
 
-Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
 // Tablet self-entry: no staff login; the one-time session token is the credential.
-Route::middleware('throttle:120,1')->group(function () {
+Route::middleware('throttle:self-entry')->group(function () {
     Route::get('self-entry/{token}', [SelfEntryController::class, 'show']);
     Route::put('self-entry/{token}', [SelfEntryController::class, 'save']);
     Route::post('self-entry/{token}/submit', [SelfEntryController::class, 'submit']);
@@ -44,13 +44,13 @@ Route::middleware('auth.token')->group(function () {
     Route::get('participants/{participant}/forms/{code}', [FormController::class, 'show']);
     Route::put('participants/{participant}/forms/{code}', [FormController::class, 'save']);
     Route::post('participants/{participant}/forms/{code}/complete', [FormController::class, 'complete']);
-    Route::post('participants/{participant}/forms/{code}/sign', [FormController::class, 'sign'])->middleware('throttle:10,1');
+    Route::post('participants/{participant}/forms/{code}/sign', [FormController::class, 'sign'])->middleware('throttle:sign');
     Route::post('participants/{participant}/forms/{code}/unlock', [FormController::class, 'unlock']);
 
     Route::post('participants/{participant}/forms/{code}/self-entry', [SelfEntryController::class, 'start'])->middleware('screen:form_pro,write');
     Route::get('participants/{participant}/ccsps', [RandomisationController::class, 'ccsps'])->middleware('screen:ccsps');
     Route::get('participants/{participant}/randomisation', [RandomisationController::class, 'check'])->middleware('screen:randomisation');
-    Route::post('participants/{participant}/randomise', [RandomisationController::class, 'randomise'])->middleware(['screen:randomisation,write', 'throttle:10,1']);
+    Route::post('participants/{participant}/randomise', [RandomisationController::class, 'randomise'])->middleware(['screen:randomisation,write', 'throttle:randomise']);
 
     Route::get('randomisation', [RandomisationController::class, 'status'])->middleware('screen:randomisation');
     Route::post('randomisation/list', [RandomisationController::class, 'upload'])->middleware('screen:randomisation_list,write');

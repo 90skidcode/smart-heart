@@ -5,6 +5,10 @@ import { useAuth } from '../auth';
 import { Alert, ArmTag, FormStatus, StatusPill, fmtDate, fmtDateTime } from '../components/Bits';
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
+import RandomisePanel from '../components/RandomisePanel';
+import CcspsPanel from '../components/CcspsPanel';
+
+const GROUPS = ['Screening', 'Consent', 'Baseline', 'PROs', 'Safety', 'Study status'];
 
 function EditIdentity({ p, onClose, onSaved }) {
   const [f, setF] = useState({ full_name: p.full_name, phone: p.phone, hospital_number: p.hospital_number || '', address: p.address || '', reason: '' });
@@ -40,7 +44,12 @@ export default function ParticipantDetail() {
   const [err, setErr] = useState(null);
   const [edit, setEdit] = useState(false);
 
-  const load = useCallback(() => api(`/participants/${id}`).then(setP).catch((e) => setErr(e.message)), [id]);
+  const [alerts, setAlerts] = useState([]);
+  const canAlerts = can('alerts'); // boolean, so the effect below does not re-run on every render
+  const load = useCallback(() => {
+    api(`/participants/${id}`).then(setP).catch((e) => setErr(e.message));
+    if (canAlerts) api(`/alerts?participant_id=${id}&status=active`).then((r) => setAlerts(r.data)).catch(() => {});
+  }, [id, canAlerts]);
   useEffect(() => { load(); }, [load]);
 
   if (err) return <div className="panel-page"><div className="field-error">{err}</div></div>;
@@ -76,33 +85,57 @@ export default function ParticipantDetail() {
         </Alert>
       )}
       {p.status === 'not_proceeding' && <Alert kind="sys" title="Not proceeding">REG-01 records this person as not potentially eligible.</Alert>}
-      {p.status === 'consented' && <Alert kind="ok" title="Consent recorded">Baseline (BL-01), PROs, safety clearance and randomisation will open here in Phase 2.</Alert>}
+      {p.status === 'withdrawn' && <Alert kind="sys" title="Withdrawn">WD-01 is signed. No further data entry; the participant app is switched off.</Alert>}
+      {p.status === 'safety_deferred' && <Alert kind="warn" title="Safety clearance not given">SAF-01 records a deferral. Randomisation stays locked until a new clearance is signed.</Alert>}
 
-      <div className="module-grid">
-        {p.form_list.map((f, i) => {
-          const open = f.status !== 'planned' && !f.locked_reason;
-          const viewable = f.status !== 'planned' && (open || f.status !== 'not_started');
-          const cls = f.status === 'signed' ? 'complete' : open && f.status !== 'complete' ? 'active-mod' : '';
-          return (
-            <div key={f.code}
-              className={`module-card ${cls} ${!viewable ? 'locked' : ''}`}
-              onClick={() => viewable && nav(`/participants/${p.id}/forms/${f.code}`)}
-              role={viewable ? 'link' : undefined} tabIndex={viewable ? 0 : -1}
-              onKeyDown={(e) => viewable && e.key === 'Enter' && nav(`/participants/${p.id}/forms/${f.code}`)}>
-              <div className="mod-num">{f.status === 'signed' ? '✓' : i + 1}</div>
-              <div className="mod-info">
-                <div className="mod-title">{f.code} · {f.title}</div>
-                <div className="mod-desc">
-                  <FormStatus status={f.status} />
-                  {f.elig_status && f.status !== 'not_started' && <span className={`elig-chip ${f.elig_status}`}>{f.elig_status.replace('_', ' ')}</span>}
-                </div>
-                {f.signed_at && <div className="mod-status done">Signed {fmtDateTime(f.signed_at)}</div>}
-                {f.locked_reason && f.status !== 'signed' && <div className="mod-status pending">🔒 {f.locked_reason}</div>}
-              </div>
+      {alerts.length > 0 && (
+        <Alert kind={alerts.some((a) => a.severity === 'critical' && a.status === 'open') ? 'fail' : 'warn'} title={`${alerts.length} safety alert${alerts.length > 1 ? 's' : ''} not closed`}>
+          <ul className="fail-list">{alerts.map((a) => <li key={a.id}>{a.summary} — {a.status}</li>)}</ul>
+          {can('alerts') && <Link className="btn-link" to="/alerts">Open Safety alerts →</Link>}
+        </Alert>
+      )}
+
+      {GROUPS.map((g) => {
+        const forms = p.form_list.filter((f) => f.group === g);
+        if (!forms.length) return null;
+        return (
+          <div key={g}>
+            <div className="group-title">{g}</div>
+            <div className="module-grid">
+              {forms.map((f) => {
+                const open = f.status !== 'planned' && !f.locked_reason;
+                const viewable = f.status !== 'planned' && (open || f.status !== 'not_started');
+                const cls = f.status === 'signed' ? 'complete' : open && f.status !== 'complete' ? 'active-mod' : '';
+                return (
+                  <div key={f.code}
+                    className={`module-card ${cls} ${!viewable ? 'locked' : ''}`}
+                    onClick={() => viewable && nav(`/participants/${p.id}/forms/${f.code}`)}
+                    role={viewable ? 'link' : undefined} tabIndex={viewable ? 0 : -1}
+                    onKeyDown={(e) => viewable && e.key === 'Enter' && nav(`/participants/${p.id}/forms/${f.code}`)}>
+                    <div className="mod-num">{f.status === 'signed' ? '✓' : f.status === 'complete' ? '●' : f.self_entry ? '✎' : '○'}</div>
+                    <div className="mod-info">
+                      <div className="mod-title">{f.code} · {f.title}</div>
+                      <div className="mod-desc">
+                        <FormStatus status={f.status} />
+                        {f.elig_status && f.status !== 'not_started' && <span className={`elig-chip ${f.elig_status}`}>{f.elig_status.replace('_', ' ')}</span>}
+                      </div>
+                      {f.signed_at && <div className="mod-status done">Signed {fmtDateTime(f.signed_at)}</div>}
+                      {f.locked_reason && f.status !== 'signed' && <div className="mod-status pending">🔒 {f.locked_reason}</div>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
+
+      {['consented', 'ready_to_randomise', 'safety_deferred', 'randomised'].includes(p.status) && can('randomisation') && (
+        <RandomisePanel p={p} onDone={load} />
+      )}
+      {['consented', 'ready_to_randomise', 'safety_deferred', 'randomised', 'withdrawn'].includes(p.status) && can('ccsps') && (
+        <CcspsPanel pid={p.id} />
+      )}
       {can('audit') && <Link className="btn-link" to={`/audit?participant_id=${p.id}`}>View this participant's audit trail →</Link>}
 
       {edit && <EditIdentity p={p} onClose={() => setEdit(false)} onSaved={(np) => { setP(np); setEdit(false); toast('Identity updated'); }} />}

@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { useAuth } from './auth';
+import { isSelfEntryPage, useAuth } from './auth';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -12,6 +12,11 @@ import Roles from './pages/Roles';
 import Audit from './pages/Audit';
 import Export from './pages/Export';
 import NoAccess from './pages/NoAccess';
+import SelfEntry from './pages/SelfEntry';
+import Alerts from './pages/Alerts';
+import Instruments from './pages/Instruments';
+import Scoring from './pages/Scoring';
+import Randomisation from './pages/Randomisation';
 
 function Guard({ screen, level = 'read', children }) {
   const { can } = useAuth();
@@ -20,6 +25,11 @@ function Guard({ screen, level = 'read', children }) {
 
 export default function App() {
   const { me, loading } = useAuth();
+
+  // Tablet self-entry needs no staff login: the session token is the credential.
+  if (isSelfEntryPage()) {
+    return <Routes><Route path="/entry/:token" element={<SelfEntry />} /></Routes>;
+  }
 
   if (loading) return <div className="boot">Loading…</div>;
 
@@ -51,6 +61,10 @@ export default function App() {
         <Route path="/roles" element={<Guard screen="roles"><Roles /></Guard>} />
         <Route path="/audit" element={<Guard screen="audit"><Audit /></Guard>} />
         <Route path="/export" element={<Export />} />
+        <Route path="/alerts" element={<Guard screen="alerts"><Alerts /></Guard>} />
+        <Route path="/instruments" element={<Guard screen="instruments"><Instruments /></Guard>} />
+        <Route path="/scoring" element={<Guard screen="scoring"><Scoring /></Guard>} />
+        <Route path="/randomisation" element={<Guard screen="randomisation"><Randomisation /></Guard>} />
         <Route path="/change-password" element={<ChangePassword />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

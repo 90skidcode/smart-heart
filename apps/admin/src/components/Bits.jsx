@@ -3,12 +3,14 @@
 const STATUS_CLASS = {
   registered: 'sp-screening', screening: 'sp-screening', not_proceeding: 'sp-muted',
   screen_failure: 'sp-failure', eligible: 'sp-eligible', declined_consent: 'sp-muted',
-  consented: 'sp-baseline', randomised: 'sp-rand', withdrawn: 'sp-muted',
+  consented: 'sp-baseline', safety_deferred: 'sp-failure', ready_to_randomise: 'sp-eligible',
+  randomised: 'sp-rand', withdrawn: 'sp-muted',
 };
 const STATUS_LABEL = {
   registered: 'Registered', screening: 'Screening', not_proceeding: 'Not proceeding',
   screen_failure: 'Screen failure', eligible: 'Eligible', declined_consent: 'Declined consent',
-  consented: 'Consented', randomised: 'Randomised', withdrawn: 'Withdrawn',
+  consented: 'Consented · baseline', safety_deferred: 'Safety deferred', ready_to_randomise: 'Ready to randomise',
+  randomised: 'Randomised', withdrawn: 'Withdrawn',
 };
 
 export function StatusPill({ status, label }) {
@@ -20,7 +22,7 @@ const FORM_STATUS = {
   in_progress: ['In progress', 'fs-prog'],
   complete: ['Complete · awaiting signature', 'fs-done'],
   signed: ['Signed & locked', 'fs-signed'],
-  planned: ['Phase 2', 'fs-none'],
+  planned: ['Awaiting input', 'fs-none'],
 };
 export function FormStatus({ status }) {
   const [l, c] = FORM_STATUS[status] || [status, 'fs-none'];
@@ -29,6 +31,7 @@ export function FormStatus({ status }) {
 
 export function ArmTag({ arm }) {
   if (!arm) return <span className="arm-tag none">Not randomised</span>;
+  if (arm === 'blinded') return <span className="arm-tag none">Randomised · blinded</span>;
   return <span className={`arm-tag ${arm}`}>{arm === 'intervention' ? 'Intervention' : 'Control'}</span>;
 }
 
