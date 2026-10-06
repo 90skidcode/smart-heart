@@ -19,7 +19,7 @@ class EligibilityEngineTest extends TestCase
             'SCR_CABG' => 'No', 'SCR_LVEF' => 52, 'SCR_LVEF_SOURCE' => 'Echo report',
             'SCR_CARDIAC_ARREST' => 'No', 'SCR_VENT_ARRHYTHMIA' => 'No', 'SCR_CARDIOGENIC_SHOCK' => 'No',
             'SCR_T2DM' => 'Yes', 'SCR_RETINOPATHY' => 'No', 'SCR_NEUROPATHY' => 'No', 'SCR_FOOT_ULCER' => 'No',
-            'SCR_EGFR' => 68, 'SCR_SBP' => 138, 'SCR_DBP' => 86,
+            'SCR_EGFR' => 68, 'SCR_SBP' => 138, 'SCR_DBP' => 86, 'SCR_ON_ANTIHYPERTENSIVE' => 'Yes',
             'SCR_VISUAL' => 'No', 'SCR_HEARING' => 'No', 'SCR_COGNITIVE' => 'No',
             'SCR_SMARTPHONE' => 'Yes', 'SCR_PHONE_USER' => 'Participant', 'SCR_PHONE_OS' => 'Android',
         ];
@@ -27,29 +27,31 @@ class EligibilityEngineTest extends TestCase
 
     private function evalWith(array $over): array
     {
-        return EligibilityEngine::evaluate(array_merge($this->prototype(), $over));
+        return EligibilityEngine::evaluate(array_merge($this->prototype(), $over), ['android']);
     }
 
     public function test_prototype_participant_is_eligible(): void
     {
-        $r = EligibilityEngine::evaluate($this->prototype());
+        $r = EligibilityEngine::evaluate($this->prototype(), ['android']);
         $this->assertSame('ELIGIBLE', $r['status']);
         $this->assertSame(55, $r['computed']['SCR_AGE']);
         $this->assertSame(1, $r['computed']['SCR_PCI_DAYS']);
-        $this->assertSame('<60', $r['computed']['AGE_STRATUM']);
+        $this->assertSame('ELIG-1.0', $r['computed']['ELIG_ENGINE']);
         $this->assertSame([], $r['computed']['SCR_FAIL_REASONS']);
     }
 
     public function test_empty_form_is_incomplete(): void
     {
-        $this->assertSame('INCOMPLETE', EligibilityEngine::evaluate([])['status']);
+        $this->assertSame('INCOMPLETE', EligibilityEngine::evaluate([], ['android'])['status']);
     }
 
     public function test_under_18_fails(): void
     {
         $r = $this->evalWith(['SCR_DOB' => '2010-01-01']);
         $this->assertSame('NOT_ELIGIBLE', $r['status']);
-        $this->assertSame('not_met', $r['computed']['INC_AGE']);
+        $this->assertSame('fail', $r['computed']['ELIG_AGE_GE_18']);
+        $this->assertSame(1, $r['stop_at_screen']);
+        $this->assertSame('not_evaluated', $r['computed']['ELIG_LVEF_GE_40']);
     }
 
     public function test_pci_window_boundaries(): void
@@ -69,6 +71,8 @@ class EligibilityEngineTest extends TestCase
         $this->assertSame('ELIGIBLE', $this->evalWith(['SCR_SBP' => 159, 'SCR_DBP' => 99])['status']);
         $this->assertSame('NOT_ELIGIBLE', $this->evalWith(['SCR_SBP' => 160])['status']);
         $this->assertSame('NOT_ELIGIBLE', $this->evalWith(['SCR_DBP' => 100])['status']);
+        // "Despite treatment": high BP while untreated is held for PI review, not excluded (vector E12).
+        $this->assertSame('INCOMPLETE', $this->evalWith(['SCR_SBP' => 165, 'SCR_ON_ANTIHYPERTENSIVE' => 'No'])['status']);
     }
 
     public function test_exclusions_and_unknowns(): void
@@ -99,11 +103,27 @@ class EligibilityEngineTest extends TestCase
         $this->assertSame('INCOMPLETE', $this->evalWith(['SCR_ACS_SUBTYPE' => null])['status']);
     }
 
-    public function test_failure_reasons_listed(): void
+    public function test_stop_rule_records_first_exclusion_only(): void
     {
         $r = $this->evalWith(['SCR_CABG' => 'Yes', 'SCR_LVEF' => 30]);
-        $this->assertCount(2, $r['computed']['SCR_FAIL_REASONS']);
-        $this->assertStringContainsString('LVEF 30%', $r['computed']['SCR_FAIL_REASONS'][1]);
+        $this->assertSame(4, $r['stop_at_screen']);
+        $this->assertCount(1, $r['computed']['SCR_FAIL_REASONS']);
+        $this->assertStringContainsString('CABG', $r['computed']['SCR_FAIL_REASONS'][0]);
+        $this->assertSame('not_evaluated', $r['computed']['ELIG_LVEF_GE_40']);
+    }
+
+    public function test_ios_follows_study_setting(): void
+    {
+        $this->assertSame('NOT_ELIGIBLE', $this->evalWith(['SCR_PHONE_OS' => 'iOS'])['status']);
+        $r = EligibilityEngine::evaluate(array_merge($this->prototype(), ['SCR_PHONE_OS' => 'iOS']), ['android', 'ios']);
+        $this->assertSame('ELIGIBLE', $r['status']);
+    }
+
+    public function test_bad_dates_hold_rather_than_crash(): void
+    {
+        $r = $this->evalWith(['SCR_PCI_DATE' => '2026-08-10']);
+        $this->assertSame('INCOMPLETE', $r['status']);
+        $this->assertStringContainsString('after the screening date', $r['criteria'][2]['detail']);
     }
 
     public function test_validator_ranges_and_visibility(): void

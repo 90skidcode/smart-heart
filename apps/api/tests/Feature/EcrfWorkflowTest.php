@@ -50,7 +50,7 @@ class EcrfWorkflowTest extends TestCase
             'SCR_PCI_VESSELS' => 1, 'SCR_PCI_STENTS' => 1, 'SCR_PCI_ACCESS' => 'Radial',
             'SCR_CABG' => 'No', 'SCR_LVEF' => 52, 'SCR_LVEF_SOURCE' => 'Echo report',
             'SCR_CARDIAC_ARREST' => 'No', 'SCR_VENT_ARRHYTHMIA' => 'No', 'SCR_CARDIOGENIC_SHOCK' => 'No',
-            'SCR_T2DM' => 'No', 'SCR_EGFR' => 68, 'SCR_SBP' => 138, 'SCR_DBP' => 86,
+            'SCR_T2DM' => 'No', 'SCR_EGFR' => 68, 'SCR_SBP' => 138, 'SCR_DBP' => 86, 'SCR_ON_ANTIHYPERTENSIVE' => 'Yes',
             'SCR_VISUAL' => 'No', 'SCR_HEARING' => 'No', 'SCR_COGNITIVE' => 'No',
             'SCR_SMARTPHONE' => 'Yes', 'SCR_PHONE_USER' => 'Participant', 'SCR_PHONE_OS' => 'Android',
         ], $over);
@@ -104,7 +104,7 @@ class EcrfWorkflowTest extends TestCase
         $this->api()->postJson("$base/SCR-01/complete")->assertOk();
         $this->api()->postJson("$base/SCR-01/sign", ['password' => 'Secret12345'])->assertOk();
         $p = $this->api()->getJson("/api/participants/{$id}")->assertJsonPath('status', 'screen_failure');
-        $this->assertSame(['CABG history'], $p->json('screen_fail_reasons'));
+        $this->assertSame(['No previous or current CABG (CABG)'], $p->json('screen_fail_reasons'));
         $this->api()->getJson('/api/dashboard')->assertJsonPath('counts.screen_failure', 1);
     }
 

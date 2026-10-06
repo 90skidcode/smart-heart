@@ -40,17 +40,25 @@ class DatabaseSeeder extends Seeder
             'Cardiologist' => [
                 'description' => 'View-only: study dashboard and intervention monitoring dashboard.',
                 'is_system' => false,
-                'perms' => $ro(['dashboard', 'participants', 'clinician_dashboard']),
+                'perms' => $ro(['dashboard', 'participants', 'clinician_dashboard', 'alerts', 'ccsps', 'view_allocation']),
             ],
         ];
 
+        // Re-runnable: creates missing roles, and adds a default row only for screens a role has
+        // no permission row for yet (new screens after an upgrade). Customised rows are never changed.
         foreach ($roles as $name => $cfg) {
             $role = Role::firstOrCreate(['name' => $name], ['description' => $cfg['description'], 'is_system' => $cfg['is_system']]);
-            if ($role->wasRecentlyCreated) {
-                foreach ($all as $screen) {
-                    $p = $cfg['perms'][$screen] ?? ['read' => false, 'write' => false];
-                    $role->permissions()->create(['screen' => $screen, 'can_read' => $p['read'], 'can_write' => $p['write']]);
-                }
+            $have = $role->permissions()->pluck('screen')->all();
+            foreach (array_diff($all, $have) as $screen) {
+                $p = $cfg['perms'][$screen] ?? ['read' => false, 'write' => false];
+                $role->permissions()->create(['screen' => $screen, 'can_read' => $p['read'], 'can_write' => $p['write']]);
+            }
+        }
+        // Roles created by the admin get "no access" rows for new screens, so the matrix stays complete.
+        foreach (Role::whereNotIn('name', array_keys($roles))->get() as $role) {
+            $have = $role->permissions()->pluck('screen')->all();
+            foreach (array_diff($all, $have) as $screen) {
+                $role->permissions()->create(['screen' => $screen, 'can_read' => false, 'can_write' => false]);
             }
         }
 

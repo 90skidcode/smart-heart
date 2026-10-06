@@ -2,199 +2,149 @@
 
 namespace App\Forms;
 
-use DateTimeImmutable;
+use App\Calc\Calc;
 
 /**
- * SCR-01 automatic eligibility, per the Eligibility Summary in SMART_HEART_eCRF.html.
+ * SCR-01 eligibility. A thin adapter: it maps eCRF field values to the inputs of
+ * App\Calc\Calc::eligibility (ELIG-1.0, docs/calculation-specification.md, vectors E1–E15)
+ * and applies one study setting on top: which phone operating systems are accepted
+ * (config smartheart.eligibility.allowed_os — Android only by default).
  *
- * Each criterion returns:
- *   inclusion: 'met' | 'not_met' | 'pending'
- *   exclusion: 'absent' | 'present' | 'pending'
- * "pending" = not yet answered, or answered "Unknown".
- *
- * Overall ELIG_STATUS:
- *   NOT_ELIGIBLE  any inclusion not_met or any exclusion present (screen failure)
- *   INCOMPLETE    otherwise, if anything is pending
- *   ELIGIBLE      all inclusions met, all exclusions absent
+ * Criterion statuses: pass | fail | pending | n/a | not_evaluated (after the first exclusion).
+ * ELIG_STATUS:  ELIGIBLE | NOT_ELIGIBLE | INCOMPLETE
  */
 class EligibilityEngine
 {
-    public const PCI_WINDOW_DAYS = 30;
-    public const LVEF_MIN = 40;
-    public const EGFR_MIN = 45;
-    public const SBP_MAX = 160;   // SBP >= 160 excludes
-    public const DBP_MAX = 100;   // DBP >= 100 excludes
+    public const ENGINE = 'ELIG-1.0';
 
-    public static function evaluate(array $d): array
+    /** Criterion codes, in screen order (used for exports and the data dictionary). */
+    public const CODES = ['AGE_GE_18', 'DX_ACS_OR_SIHD', 'PCI_LE_30D', 'NO_CABG', 'LVEF_GE_40', 'PRIOR_CARDIAC_ARREST',
+        'COMPLEX_VENT_ARRHYTHMIA', 'CARDIOGENIC_SHOCK', 'RETINOPATHY', 'PERIPHERAL_NEUROPATHY', 'DIABETIC_FOOT_ULCER',
+        'EGFR_GE_45', 'BP_CONTROLLED', 'VISUAL_IMPAIRMENT', 'HEARING_IMPAIRMENT', 'COGNITIVE_IMPAIRMENT', 'DIGITAL_ACCESS'];
+
+    public static function evaluate(array $d, ?array $allowedOs = null): array
     {
-        $age = self::yearsBetween($d['SCR_DOB'] ?? null, $d['SCR_DATE'] ?? null);
-        $pciDays = (($d['SCR_PCI_DONE'] ?? null) === 'Yes')
-            ? self::daysBetween($d['SCR_PCI_DATE'] ?? null, $d['SCR_DATE'] ?? null)
-            : null;
+        $allowedOs ??= config('smartheart.eligibility.allowed_os', ['android']);
+        $notes = [];
 
-        $c = [];
-
-        // ---------- Inclusion ----------
-        $c[] = self::crit('INC_AGE', 'inclusion', 'Age ≥ 18 years',
-            $age === null ? 'pending' : ($age >= 18 ? 'met' : 'not_met'),
-            $age === null ? 'Enter date of birth and screening date' : "{$age} years");
-
-        $dx = $d['SCR_DIAGNOSIS'] ?? null;
-        $dxDetail = $dx === 'Acute Coronary Syndrome (ACS)' ? ($d['SCR_ACS_SUBTYPE'] ?? 'ACS — subtype pending') : $dx;
-        $dxStatus = match (true) {
-            $dx === null => 'pending',
-            $dx === 'Other' => 'not_met',
-            $dx === 'Acute Coronary Syndrome (ACS)' && empty($d['SCR_ACS_SUBTYPE']) => 'pending',
-            default => 'met',
-        };
-        $c[] = self::crit('INC_DIAGNOSIS', 'inclusion', 'ACS / Stable IHD diagnosis', $dxStatus, $dxDetail);
-
-        $pciDone = $d['SCR_PCI_DONE'] ?? null;
-        if ($pciDone === null) {
-            $pci = ['pending', null];
-        } elseif ($pciDone === 'No') {
-            $pci = ['not_met', 'No PCI'];
-        } elseif ($pciDays === null) {
-            $pci = ['pending', 'Enter PCI date and screening date'];
-        } elseif ($pciDays < 0) {
-            $pci = ['pending', 'PCI date is after the screening date — check dates'];
-        } elseif ($pciDays <= self::PCI_WINDOW_DAYS) {
-            $pci = ['met', "{$pciDays} day(s) before screening"];
-        } else {
-            $pci = ['not_met', "{$pciDays} days before screening (window ≤ ".self::PCI_WINDOW_DAYS.')'];
+        $dob = self::date($d['SCR_DOB'] ?? null);
+        $scr = self::date($d['SCR_DATE'] ?? null);
+        $pci = self::date($d['SCR_PCI_DATE'] ?? null);
+        if ($dob && $scr && $dob > $scr) {
+            $notes['AGE_GE_18'] = 'Date of birth is after the screening date — check dates';
+            $dob = null;
         }
-        $c[] = self::crit('INC_PCI', 'inclusion', 'PCI within ≤ 30 days', $pci[0], $pci[1]);
+        if ($pci && $scr && $pci > $scr) {
+            $notes['PCI_LE_30D'] = 'PCI date is after the screening date — check dates';
+            $pci = null;
+        }
 
-        $phone = $d['SCR_SMARTPHONE'] ?? null;
-        $os = $d['SCR_PHONE_OS'] ?? null;
-        $ph = match (true) {
-            $phone === null => ['pending', null],
-            $phone === 'No' => ['not_met', 'No smartphone access'],
-            $os === null => ['pending', 'Operating system not entered'],
-            $os === 'Android' => ['met', 'Android'],
-            default => ['not_met', "{$os} — study app is Android only"],
-        };
-        $c[] = self::crit('INC_SMARTPHONE', 'inclusion', 'Compatible Android smartphone access', $ph[0], $ph[1]);
+        $in = [
+            'dob' => $dob,
+            'screening_date' => $scr,
+            'index_diagnosis' => self::map($d['SCR_DIAGNOSIS'] ?? null, [
+                'Acute Coronary Syndrome (ACS)' => 'acs', 'Stable Ischaemic Heart Disease' => 'stable_ihd', 'Other' => 'other']),
+            'acs_subtype' => self::map($d['SCR_ACS_SUBTYPE'] ?? null, ['STEMI' => 'stemi', 'NSTEMI' => 'nstemi', 'Unstable Angina' => 'ua']),
+            'pci_done' => self::bool($d['SCR_PCI_DONE'] ?? null),
+            'pci_date' => $pci,
+            'cabg_history' => self::bool($d['SCR_CABG'] ?? null),
+            'lvef_pct' => self::num($d['SCR_LVEF'] ?? null),
+            'prior_cardiac_arrest' => self::ynu($d['SCR_CARDIAC_ARREST'] ?? null),
+            'complex_vent_arrhythmia' => self::ynu($d['SCR_VENT_ARRHYTHMIA'] ?? null),
+            'cardiogenic_shock' => self::ynu($d['SCR_CARDIOGENIC_SHOCK'] ?? null),
+            't2dm' => self::bool($d['SCR_T2DM'] ?? null),
+            'retinopathy' => self::ynu($d['SCR_RETINOPATHY'] ?? null),
+            'peripheral_neuropathy' => self::ynu($d['SCR_NEUROPATHY'] ?? null),
+            'diabetic_foot_ulcer' => self::ynu($d['SCR_FOOT_ULCER'] ?? null),
+            'egfr' => self::num($d['SCR_EGFR'] ?? null),
+            'sbp' => self::num($d['SCR_SBP'] ?? null),
+            'dbp' => self::num($d['SCR_DBP'] ?? null),
+            'on_antihypertensive' => self::bool($d['SCR_ON_ANTIHYPERTENSIVE'] ?? null),
+            'visual_impairment' => self::impair($d['SCR_VISUAL'] ?? null),
+            'hearing_impairment' => self::impair($d['SCR_HEARING'] ?? null),
+            'cognitive_impairment' => self::impair($d['SCR_COGNITIVE'] ?? null),
+            'smartphone_access' => self::bool($d['SCR_SMARTPHONE'] ?? null),
+            'phone_os' => self::map($d['SCR_PHONE_OS'] ?? null, ['Android' => 'android', 'iOS' => 'ios', 'Other' => 'other']),
+        ];
 
-        // ---------- Exclusion ----------
-        $c[] = self::yesNo('EXC_CABG', 'CABG history', $d['SCR_CABG'] ?? null);
+        $r = Calc::eligibility($in);
+        $criteria = $r['criteria'];
 
-        $lvef = self::num($d['SCR_LVEF'] ?? null);
-        $c[] = self::crit('EXC_LVEF', 'exclusion', 'LVEF < 40%',
-            $lvef === null ? 'pending' : ($lvef < self::LVEF_MIN ? 'present' : 'absent'),
-            $lvef === null ? null : "LVEF {$lvef}%");
-
-        $c[] = self::yesNo('EXC_CARDIAC_ARREST', 'Previous cardiac arrest', $d['SCR_CARDIAC_ARREST'] ?? null);
-        $c[] = self::yesNo('EXC_VENT_ARRHYTHMIA', 'Complex ventricular arrhythmia', $d['SCR_VENT_ARRHYTHMIA'] ?? null);
-        $c[] = self::yesNo('EXC_CARDIOGENIC_SHOCK', 'Cardiogenic shock', $d['SCR_CARDIOGENIC_SHOCK'] ?? null);
-
-        $dm = $d['SCR_T2DM'] ?? null;
-        if ($dm === null) {
-            $dmc = ['pending', null];
-        } elseif ($dm === 'No') {
-            $dmc = ['absent', 'No type 2 diabetes'];
-        } else {
-            $parts = ['SCR_RETINOPATHY' => 'retinopathy', 'SCR_NEUROPATHY' => 'neuropathy', 'SCR_FOOT_ULCER' => 'foot ulcer'];
-            $present = [];
-            $pending = false;
-            foreach ($parts as $k => $label) {
-                $v = $d[$k] ?? null;
-                if ($v === 'Yes') {
-                    $present[] = $label;
-                } elseif ($v === null || $v === 'Unknown') {
-                    $pending = true;
-                }
+        // Study setting: accepted phone OS (Calc accepts Android and iOS; the trial app is Android only).
+        foreach ($criteria as $i => $c) {
+            if ($c['code'] === 'DIGITAL_ACCESS' && $c['status'] === 'pass' && ! in_array($in['phone_os'], $allowedOs, true)) {
+                $criteria[$i]['status'] = 'fail';
+                $criteria[$i]['evidence'] = "{$in['phone_os']} — study app supports ".implode(', ', $allowedOs).' only';
             }
-            $dmc = $present ? ['present', 'Has '.implode(', ', $present)] : ($pending ? ['pending', 'Complications not fully assessed'] : ['absent', 'No complications']);
+            if (isset($notes[$c['code']]) && $c['status'] === 'pending') {
+                $criteria[$i]['evidence'] = $notes[$c['code']];
+            }
         }
-        $c[] = self::crit('EXC_DM_COMPLICATIONS', 'exclusion', 'Diabetes complications (retinopathy / neuropathy / foot ulcer)', $dmc[0], $dmc[1]);
 
-        $egfr = self::num($d['SCR_EGFR'] ?? null);
-        $c[] = self::crit('EXC_EGFR', 'exclusion', 'eGFR < 45 mL/min/1.73m²',
-            $egfr === null ? 'pending' : ($egfr < self::EGFR_MIN ? 'present' : 'absent'),
-            $egfr === null ? null : "eGFR {$egfr}");
+        $statuses = array_column($criteria, 'status');
+        $result = in_array('fail', $statuses, true) ? 'NOT_ELIGIBLE' : (in_array('pending', $statuses, true) ? 'INCOMPLETE' : 'ELIGIBLE');
+        $fails = array_values(array_filter($criteria, fn ($c) => $c['status'] === 'fail'));
+        $stop = $fails[0]['screen'] ?? null;
 
-        $sbp = self::num($d['SCR_SBP'] ?? null);
-        $dbp = self::num($d['SCR_DBP'] ?? null);
-        $htn = ($sbp === null || $dbp === null) ? 'pending'
-            : (($sbp >= self::SBP_MAX || $dbp >= self::DBP_MAX) ? 'present' : 'absent');
-        $c[] = self::crit('EXC_UNCONTROLLED_HTN', 'exclusion', 'Uncontrolled hypertension (SBP ≥ 160 or DBP ≥ 100)', $htn,
-            ($sbp === null || $dbp === null) ? null : "BP {$sbp}/{$dbp}");
-
-        $unsafe = 'Yes — prevents safe app use';
-        $vis = $d['SCR_VISUAL'] ?? null;
-        $hear = $d['SCR_HEARING'] ?? null;
-        $sens = ($vis === $unsafe || $hear === $unsafe) ? 'present' : (($vis === null || $hear === null) ? 'pending' : 'absent');
-        $c[] = self::crit('EXC_SENSORY', 'exclusion', 'Unsafe sensory impairment', $sens, null);
-
-        $cog = $d['SCR_COGNITIVE'] ?? null;
-        $c[] = self::crit('EXC_COGNITIVE', 'exclusion', 'Unsafe cognitive impairment',
-            $cog === null ? 'pending' : ($cog === $unsafe ? 'present' : 'absent'), null);
-
-        // ---------- Overall ----------
-        $fails = array_values(array_filter($c, fn ($x) => in_array($x['status'], ['not_met', 'present'], true)));
-        $pend = array_values(array_filter($c, fn ($x) => $x['status'] === 'pending'));
-        $overall = $fails ? 'NOT_ELIGIBLE' : ($pend ? 'INCOMPLETE' : 'ELIGIBLE');
+        $age = ($dob && $scr) ? Calc::ageYears($dob, $scr) : null;
+        $pciDays = ($pci && $scr && $in['pci_done'] === true) ? Calc::daysBetween($pci, $scr) : null;
 
         $computed = [
             'SCR_AGE' => $age,
             'SCR_PCI_DAYS' => $pciDays,
-            'ELIG_STATUS' => $overall,
-            'SCR_FAIL_REASONS' => array_map(fn ($x) => $x['label'].($x['detail'] ? " ({$x['detail']})" : ''), $fails),
-            'AGE_STRATUM' => $age === null ? null : ($age < 60 ? '<60' : '≥60'),
+            'ELIG_ENGINE' => self::ENGINE,
+            'ELIG_STATUS' => $result,
+            'ELIG_STOP_SCREEN' => $stop,
+            'SCR_FAIL_REASONS' => array_map(fn ($c) => $c['label'].($c['evidence'] ? " ({$c['evidence']})" : ''), $fails),
         ];
-        foreach ($c as $x) {
-            $computed[$x['code']] = $x['status'];
+        foreach ($criteria as $c) {
+            $computed['ELIG_'.$c['code']] = $c['status'];
         }
 
-        return ['status' => $overall, 'criteria' => $c, 'computed' => $computed];
+        $out = array_map(fn ($c) => [
+            'code' => $c['code'], 'screen' => $c['screen'], 'label' => $c['label'],
+            'status' => $c['status'], 'detail' => $c['evidence'],
+        ], $criteria);
+
+        return ['status' => $result, 'engine' => self::ENGINE, 'stop_at_screen' => $stop, 'criteria' => $out, 'computed' => $computed];
     }
 
-    private static function crit(string $code, string $kind, string $label, string $status, ?string $detail): array
+    // ---------------------------------------------------------------- mapping helpers
+
+    private static function date(mixed $v): ?string
     {
-        return compact('code', 'kind', 'label', 'status', 'detail');
+        return FormValidator::isDate($v) ? $v : null;
     }
 
-    private static function yesNo(string $code, string $label, ?string $v): array
+    private static function bool(mixed $v): ?bool
     {
-        return self::crit($code, 'exclusion', $label,
-            match ($v) { 'Yes' => 'present', 'No' => 'absent', default => 'pending' },
-            $v === 'Unknown' ? 'Unknown — clarify before deciding' : null);
+        return $v === 'Yes' ? true : ($v === 'No' ? false : null);
     }
 
-    private static function num(mixed $v): ?float
+    private static function ynu(mixed $v): ?string
     {
-        return is_numeric($v) ? (float) $v + 0 : null;
+        return self::map($v, ['Yes' => 'yes', 'No' => 'no', 'Unknown' => 'unknown']);
     }
 
-    private static function date(?string $v): ?DateTimeImmutable
+    private static function impair(mixed $v): ?string
     {
-        if (! FormValidator::isDate($v)) {
+        if ($v === null) {
             return null;
         }
-
-        return new DateTimeImmutable($v);
-    }
-
-    public static function yearsBetween(?string $from, ?string $to): ?int
-    {
-        $a = self::date($from);
-        $b = self::date($to);
-        if (! $a || ! $b || $a > $b) {
-            return null;
+        if ($v === 'No') {
+            return 'no';
         }
 
-        return $a->diff($b)->y;
+        return str_contains($v, 'prevents') ? 'yes_unsafe' : 'yes_with_support';
     }
 
-    public static function daysBetween(?string $from, ?string $to): ?int
+    private static function num(mixed $v): int|float|null
     {
-        $a = self::date($from);
-        $b = self::date($to);
-        if (! $a || ! $b) {
-            return null;
-        }
+        return is_numeric($v) ? $v + 0 : null;
+    }
 
-        return (int) $a->diff($b)->format('%r%a');
+    private static function map(mixed $v, array $m): ?string
+    {
+        return $v === null ? null : ($m[$v] ?? null);
     }
 }

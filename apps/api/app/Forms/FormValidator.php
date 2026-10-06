@@ -33,10 +33,15 @@ class FormValidator
         $fields = FormRegistry::fields($formCode);
         $data = [];
         foreach ($fields as $code => $f) {
-            if ($f['type'] === 'computed' || ! array_key_exists($code, $input)) {
+            if (in_array($f['type'], ['computed', 'info'], true) || ! array_key_exists($code, $input)) {
                 continue;
             }
             $v = $input[$code];
+            if ($f['type'] === 'table') {
+                $v = self::cleanTable($f, $v);
+            } elseif ($f['type'] === 'checkboxes') {
+                $v = is_array($v) ? array_values(array_intersect($f['options'], $v)) : null;
+            }
             if (is_string($v)) {
                 $v = trim($v);
             }
@@ -64,7 +69,7 @@ class FormValidator
         $missing = [];
 
         foreach (FormRegistry::fields($formCode) as $code => $f) {
-            if ($f['type'] === 'computed' || ! self::isVisible($f, $data)) {
+            if (in_array($f['type'], ['computed', 'info'], true) || ! self::isVisible($f, $data)) {
                 continue;
             }
             $v = $data[$code] ?? null;
@@ -119,6 +124,35 @@ class FormValidator
                     }
                     break;
 
+                case 'choice':
+                    if (! in_array($v, array_column($f['options'], 'value'), true)) {
+                        $errors[$code] = 'Not one of the allowed answers.';
+                    }
+                    break;
+
+                case 'checkboxes':
+                    if (! is_array($v) || array_diff($v, $f['options'])) {
+                        $errors[$code] = 'Not one of the allowed options.';
+                    } elseif (! empty($f['required']) && ! $v) {
+                        $missing[] = $code;
+                    }
+                    break;
+
+                case 'scale':
+                    if (! is_int($v) || $v < $f['min'] || $v > $f['max']) {
+                        $errors[$code] = "Must be a whole number from {$f['min']} to {$f['max']}.";
+                    }
+                    break;
+
+                case 'table':
+                    $rowErrors = self::validateTable($f, $v, $today);
+                    if ($rowErrors) {
+                        $errors[$code] = $rowErrors;
+                    } elseif (! empty($f['required']) && ! $v) {
+                        $missing[] = $code;
+                    }
+                    break;
+
                 case 'text':
                     if (! is_string($v) || mb_strlen($v) > 500) {
                         $errors[$code] = 'Text must be under 500 characters.';
@@ -128,6 +162,69 @@ class FormValidator
         }
 
         return ['errors' => $errors, 'warnings' => $warnings, 'missing' => $missing];
+    }
+
+    /** Keep known columns, trim strings, drop fully empty rows. */
+    private static function cleanTable(array $f, mixed $rows): ?array
+    {
+        if (! is_array($rows)) {
+            return null;
+        }
+        $out = [];
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $clean = [];
+            foreach ($f['columns'] as $col) {
+                $v = $row[$col['code']] ?? null;
+                if (is_string($v)) {
+                    $v = trim($v);
+                }
+                if ($col['type'] === 'checkboxes') {
+                    $v = is_array($v) ? array_values(array_intersect($col['options'], $v)) : [];
+                }
+                $clean[$col['code']] = ($v === '' ? null : $v);
+            }
+            if (array_filter($clean, fn ($v) => $v !== null && $v !== [])) {
+                $out[] = $clean;
+            }
+        }
+
+        return $out ?: null;
+    }
+
+    /** Validate each row of a table field. Returns "Row n: message" strings joined, or ''. */
+    private static function validateTable(array $f, mixed $rows, string $today): string
+    {
+        if (! is_array($rows)) {
+            return 'Invalid rows.';
+        }
+        $msgs = [];
+        foreach (array_values($rows) as $i => $row) {
+            foreach ($f['columns'] as $col) {
+                $v = $row[$col['code']] ?? null;
+                $n = $i + 1;
+                if ($v === null || $v === []) {
+                    if (! empty($col['required'])) {
+                        $msgs[] = "Row {$n}: {$col['label']} is required.";
+                    }
+                    continue;
+                }
+                $bad = match ($col['type']) {
+                    'select' => ! in_array($v, $col['options'], true),
+                    'checkboxes' => ! is_array($v) || array_diff($v, $col['options']),
+                    'date' => ! self::isDate($v) || (! empty($col['not_future']) && $v > $today),
+                    'number' => ! is_numeric($v) || (isset($col['min']) && $v < $col['min']) || (isset($col['max']) && $v > $col['max']),
+                    default => ! is_string($v) || mb_strlen($v) > 200,
+                };
+                if ($bad) {
+                    $msgs[] = "Row {$n}: {$col['label']} is not valid.";
+                }
+            }
+        }
+
+        return implode(' ', $msgs);
     }
 
     public static function isDate(mixed $v): bool

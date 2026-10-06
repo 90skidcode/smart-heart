@@ -22,7 +22,7 @@ class ParticipantController extends Controller
         if ($s = $request->query('status')) {
             $q->where('status', $s);
         }
-        if (($arm = $request->query('arm')) && $arm !== 'all') {
+        if (($arm = $request->query('arm')) && $arm !== 'all' && $request->user()->canScreen('view_allocation')) {
             $arm === 'unassigned' ? $q->whereNull('arm') : $q->where('arm', $arm);
         }
         if ($term = trim((string) $request->query('q'))) {
@@ -113,6 +113,16 @@ class ParticipantController extends Controller
         return response()->json($this->detail($participant->load('forms')));
     }
 
+    /** Arm is shown only to roles with "view_allocation"; others see that the participant is randomised, not the arm. */
+    private function armFor(Participant $p): ?string
+    {
+        if (! $p->arm) {
+            return null;
+        }
+
+        return request()->user()?->canScreen('view_allocation') ? $p->arm : 'blinded';
+    }
+
     private function summary(Participant $p): array
     {
         return [
@@ -123,7 +133,7 @@ class ParticipantController extends Controller
             'hospital_number' => $p->hospital_number,
             'status' => $p->status,
             'status_label' => Participant::STATUSES[$p->status] ?? $p->status,
-            'arm' => $p->arm,
+            'arm' => $this->armFor($p),
             'registered_on' => $p->created_at?->toDateString(),
             'forms' => $p->forms->mapWithKeys(fn ($f) => [$f->form_code => $f->status]),
         ];
@@ -138,6 +148,8 @@ class ParticipantController extends Controller
             $forms[] = [
                 'code' => $code,
                 'title' => $def['title'],
+                'group' => $def['group'] ?? 'Other',
+                'self_entry' => ! empty($def['self_entry']),
                 'status' => $f?->status ?? 'not_started',
                 'locked_reason' => $this->forms->lockReason($p, $code),
                 'signed_at' => $f?->signed_at?->toIso8601String(),
@@ -145,9 +157,10 @@ class ParticipantController extends Controller
                 'elig_status' => $code === 'SCR-01' ? ($f?->computed['ELIG_STATUS'] ?? null) : null,
             ];
         }
-        foreach (FormRegistry::PLANNED as $code => $title) {
-            $forms[] = ['code' => $code, 'title' => $title, 'status' => 'planned', 'locked_reason' => 'Available in Phase 2 of the build.'];
+        foreach (FormRegistry::PLANNED as $code => [$title, $why]) {
+            $forms[] = ['code' => $code, 'title' => $title, 'group' => 'PROs', 'status' => 'planned', 'locked_reason' => $why];
         }
+        $rand = $p->form('RAND-01');
 
         return $this->summary($p) + [
             'phone' => $p->phone,
@@ -155,6 +168,14 @@ class ParticipantController extends Controller
             'age_stratum' => $p->age_stratum,
             'screen_fail_reasons' => $p->screen_fail_reasons,
             'screen_failed_on' => $p->screen_failed_on?->toDateString(),
+            'randomisation' => $rand ? [
+                'date' => $p->randomisation_date?->toDateString(),
+                'stratum' => $p->age_stratum,
+                'age' => $rand->data['RAND_AGE'] ?? null,
+                'seq_no' => $rand->data['RAND_SEQ_NO'] ?? null,
+                'by' => $rand->signer?->name,
+                'at' => $rand->signed_at?->toIso8601String(),
+            ] : null,
             'form_list' => $forms,
         ];
     }

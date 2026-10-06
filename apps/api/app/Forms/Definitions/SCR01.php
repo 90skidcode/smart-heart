@@ -19,8 +19,9 @@ return [
     'title' => 'Eligibility Assessment',
     'eyebrow' => 'SCR-01 · Screening & Eligibility',
     'description' => 'Complete only the information required to determine eligibility. Each criterion is checked as you enter it; the participant cannot move to consent unless all criteria are met.',
-    'arms' => ['all'],
-    'requires' => ['REG-01'],
+    'group' => 'Screening',
+    'gate' => ['reg_yes'],
+    'calculator' => App\Forms\Calculators\ScreeningCalculator::class,
     'sections' => [
         [
             'title' => 'Screen 1 — Age',
@@ -100,6 +101,8 @@ return [
                     'min' => 50, 'max' => 300, 'plausible_min' => 70, 'plausible_max' => 250],
                 ['code' => 'SCR_DBP', 'label' => 'Screening BP — diastolic', 'type' => 'number', 'unit' => 'mmHg', 'required' => true, 'integer' => true,
                     'min' => 20, 'max' => 200, 'plausible_min' => 40, 'plausible_max' => 140],
+                ['code' => 'SCR_ON_ANTIHYPERTENSIVE', 'label' => 'Currently on antihypertensive treatment?', 'type' => 'radio', 'required' => true,
+                    'options' => ['Yes', 'No'], 'note' => 'BP ≥ 160/100 excludes only when on treatment; untreated high BP is held for PI review.'],
             ],
         ],
         [

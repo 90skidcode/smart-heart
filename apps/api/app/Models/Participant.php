@@ -20,17 +20,20 @@ class Participant extends Model
         'screen_failure' => 'Screen failure',
         'eligible' => 'Eligible',
         'declined_consent' => 'Declined consent',
-        'consented' => 'Consented',
+        'consented' => 'Consented · baseline',
+        'safety_deferred' => 'Safety clearance deferred',
+        'ready_to_randomise' => 'Ready to randomise',
         'randomised' => 'Randomised',
         'withdrawn' => 'Withdrawn',
     ];
 
     protected $fillable = ['study_id', 'screening_id', 'full_name', 'phone', 'hospital_number', 'address',
-        'status', 'arm', 'age_stratum', 'screen_fail_reasons', 'screen_failed_on', 'created_by'];
+        'status', 'arm', 'age_stratum', 'screen_fail_reasons', 'screen_failed_on', 'created_by',
+        'randomised_at', 'randomisation_date', 'randomised_by'];
 
     protected function casts(): array
     {
-        return ['screen_fail_reasons' => 'array', 'screen_failed_on' => 'date'];
+        return ['screen_fail_reasons' => 'array', 'screen_failed_on' => 'date', 'randomised_at' => 'datetime', 'randomisation_date' => 'date'];
     }
 
     public function forms(): HasMany

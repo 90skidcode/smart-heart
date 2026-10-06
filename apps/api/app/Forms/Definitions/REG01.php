@@ -11,8 +11,8 @@ return [
     'title' => 'Participant Registration',
     'eyebrow' => 'REG-01 · Pre-Screening',
     'description' => 'Create a minimal record before screening begins. No eligibility decisions at this stage.',
-    'arms' => ['all'],
-    'requires' => [],
+    'group' => 'Screening',
+    'gate' => [],
     'sections' => [
         [
             'title' => 'Referral Information',

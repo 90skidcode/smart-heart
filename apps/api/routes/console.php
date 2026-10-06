@@ -15,3 +15,6 @@ Schedule::command('shi:backup')->dailyAt('01:30');
 Schedule::call(fn () => ApiToken::where('expires_at', '<', now())
     ->orWhere('last_used_at', '<', now()->subMinutes(config('smartheart.security.idle_minutes')))
     ->delete())->hourly();
+
+// Escalate critical safety alerts not acknowledged within the window (default 2 h).
+Schedule::call(fn () => app(App\Services\SafetyAlertService::class)->escalateOverdue())->everyFiveMinutes()->name('alerts-escalate')->withoutOverlapping();

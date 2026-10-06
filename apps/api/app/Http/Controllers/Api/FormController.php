@@ -20,6 +20,7 @@ class FormController extends Controller
     {
         return response()->json([
             'forms' => collect(FormRegistry::codes())->mapWithKeys(fn ($c) => [$c => FormRegistry::get($c)]),
+            'planned' => FormRegistry::PLANNED,
             'change_reasons' => config('smartheart.change_reasons'),
             'signature_meanings' => config('smartheart.signature_meanings'),
         ]);
@@ -42,7 +43,8 @@ class FormController extends Controller
             return $deny;
         }
         $data = FormValidator::clean($code, $request->input('data', []));
-        $check = $this->forms->check($code, $data);
+        $p = $request->integer('participant_id') ? Participant::find($request->integer('participant_id')) : null;
+        $check = $this->forms->check($code, $data, $p);
         $out = $check;
         if ($code === 'SCR-01') {
             $out['eligibility'] = EligibilityEngine::evaluate($data);
@@ -138,7 +140,8 @@ class FormController extends Controller
                 }
             }
         }
-        $check = $this->forms->check($code, $data);
+        $check = $this->forms->check($code, $data, $p);
+        $def = FormRegistry::get($code);
 
         return [
             'participant' => ['id' => $p->id, 'study_id' => $p->study_id, 'screening_id' => $p->screening_id,
@@ -157,6 +160,13 @@ class FormController extends Controller
             'signature_meaning' => $f?->signature_meaning,
             'unlock_count' => $f?->unlock_count ?? 0,
             'updated_at' => $f?->updated_at?->toIso8601String(),
+            'self_entry' => ! empty($def['self_entry']) ? [
+                'languages' => collect(\App\Support\InstrumentTexts::LANGS)->map(fn ($label, $l) => [
+                    'label' => $label, 'ready' => \App\Support\InstrumentTexts::ready($def['instrument'], $l)])->all(),
+                'source' => $def['source'] ?? null,
+                'open_session' => \App\Models\SelfEntrySession::where('participant_id', $p->id)->where('form_code', $code)
+                    ->whereNull('completed_at')->whereNull('cancelled_at')->where('expires_at', '>', now())->exists(),
+            ] : null,
         ];
     }
 }

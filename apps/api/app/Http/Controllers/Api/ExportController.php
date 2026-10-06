@@ -21,12 +21,6 @@ class ExportController extends Controller
     /** Columns removed from de-identified exports. */
     private const IDENTIFYING_FIELDS = ['SCR_DOB', 'CON_WITNESS_NAME', 'CON_TAKEN_BY'];
 
-    private const COMPUTED = [
-        'SCR-01' => ['SCR_AGE', 'SCR_PCI_DAYS', 'AGE_STRATUM', 'ELIG_STATUS', 'SCR_FAIL_REASONS',
-            'INC_AGE', 'INC_DIAGNOSIS', 'INC_PCI', 'INC_SMARTPHONE',
-            'EXC_CABG', 'EXC_LVEF', 'EXC_CARDIAC_ARREST', 'EXC_VENT_ARRHYTHMIA', 'EXC_CARDIOGENIC_SHOCK',
-            'EXC_DM_COMPLICATIONS', 'EXC_EGFR', 'EXC_UNCONTROLLED_HTN', 'EXC_SENSORY', 'EXC_COGNITIVE'],
-    ];
 
     public function data(Request $request)
     {
@@ -128,9 +122,12 @@ class ExportController extends Controller
                 }
                 $cols[$field] = ['data', $code, $field];
             }
-            foreach (self::COMPUTED[$code] ?? [] as $c) {
+            foreach (FormRegistry::computedKeys($code) as $c) {
                 $cols[$c] = ['computed', $code, $c];
             }
+        }
+        foreach (['RAND_DATE', 'RAND_AGE', 'RAND_STRATUM', 'RAND_SEQ_NO', 'RAND_METHOD'] as $c) {
+            $cols[$c] = ['data', 'RAND-01', $c];
         }
 
         return $cols;
@@ -140,7 +137,9 @@ class ExportController extends Controller
     {
         if ($src[0] === 'sys') {
             $v = $p->{$src[1]};
-            if ($src[1] === 'arm' && $v && $armCoding === 'ab') {
+            if ($src[1] === 'arm' && $v && ! request()->user()?->canScreen('view_allocation')) {
+                $v = 'blinded';
+            } elseif ($src[1] === 'arm' && $v && $armCoding === 'ab') {
                 $v = $codes[$v] ?? '?';
             }
             if ($v instanceof \DateTimeInterface) {
@@ -158,6 +157,12 @@ class ExportController extends Controller
             'data' => $form->data[$src[2]] ?? null,
             'computed' => $form->computed[$src[2]] ?? null,
         };
+
+        if (is_array($v) && array_is_list($v) && isset($v[0]) && is_array($v[0])) {
+            // Table field (e.g. BL_MEDS): one "a, b, c" group per row, rows separated by " ; ".
+            return implode(' ; ', array_map(fn ($row) => implode(', ', array_map(
+                fn ($x) => is_array($x) ? implode('/', $x) : (string) ($x ?? ''), $row)), $v));
+        }
 
         return is_array($v) ? implode(' | ', $v) : (string) ($v ?? '');
     }
@@ -179,14 +184,25 @@ class ExportController extends Controller
                 $src[2] === 'status' ? 'in_progress | complete | signed' : '', '', '', '', 'System'];
         }
         if ($src[0] === 'computed') {
-            $coding = str_starts_with($col, 'INC_') ? 'met | not_met | pending'
-                : (str_starts_with($col, 'EXC_') ? 'absent | present | pending'
-                : ($col === 'ELIG_STATUS' ? 'ELIGIBLE | NOT_ELIGIBLE | INCOMPLETE' : ''));
+            $coding = str_starts_with($col, 'ELIG_') && ! in_array($col, ['ELIG_STATUS', 'ELIG_ENGINE', 'ELIG_STOP_SCREEN'], true) ? 'pass | fail | pending | n/a | not_evaluated'
+                : ($col === 'ELIG_STATUS' ? 'ELIGIBLE | NOT_ELIGIBLE | INCOMPLETE' : '');
+            $label = FormRegistry::fields($src[1])[$col]['label'] ?? $col;
+            $unit = FormRegistry::fields($src[1])[$col]['unit'] ?? ($col === 'SCR_AGE' ? 'years' : ($col === 'SCR_PCI_DAYS' ? 'days' : ''));
 
-            return [$col, $src[1], $col, 'computed', $col === 'SCR_AGE' ? 'years' : ($col === 'SCR_PCI_DAYS' ? 'days' : ''),
-                $coding, '', '', '', 'System-calculated (EligibilityEngine), never entered by staff'];
+            return [$col, $src[1], $label, 'computed', $unit, $coding, '', '', '', 'System-calculated (App\\Calc\\Calc), never entered by staff'];
+        }
+        if ($src[1] === 'RAND-01') {
+            return [$col, 'RAND-01', $col, 'system', '', $col === 'RAND_STRATUM' ? 'lt60 | ge60' : '', '', '', '', 'Written by the randomisation service'];
         }
         $d = FormRegistry::fields($src[1])[$src[2]];
+        if ($d['type'] === 'table') {
+            $cols = implode(', ', array_map(fn ($c) => $c['code'], $d['columns']));
+
+            return [$col, $src[1], $d['label'], 'table', '', "One group per row: {$cols}; rows separated by ' ; '", '', '', '', ''];
+        }
+        if ($d['type'] === 'choice') {
+            $d['options'] = array_map(fn ($o) => "{$o['value']}={$o['label']}", $d['options']);
+        }
         $range = fn ($a, $b) => (isset($d[$a]) || isset($d[$b])) ? (($d[$a] ?? '') . ' – ' . ($d[$b] ?? '')) : '';
         $show = isset($d['show_if']) ? "{$d['show_if']['field']} = {$d['show_if']['equals']}" : '';
 

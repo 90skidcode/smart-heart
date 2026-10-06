@@ -11,8 +11,8 @@ return [
     'title' => 'Informed Consent Record',
     'eyebrow' => 'CON-01 · Consent',
     'description' => 'Record that written informed consent was obtained. Baseline forms stay locked until this form is PI-signed with consent given.',
-    'arms' => ['all'],
-    'requires' => ['SCR-01'],
+    'group' => 'Consent',
+    'gate' => ['eligible_signed'],
     'sections' => [
         [
             'title' => 'Consent Process',
