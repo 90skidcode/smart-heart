@@ -1,7 +1,0 @@
-admin/node_modules/
-api/vendor/
-api/.env
-api/public/admin/
-api/database/*.sqlite
-api/storage/app/backups/
-api/.phpunit.result.cache

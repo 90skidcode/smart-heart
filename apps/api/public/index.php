@@ -1,17 +1,20 @@
 <?php
 
-declare(strict_types=1);
+use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
 
-// Front controller. Local: composer serve (php -S localhost:8080 public/index.php)
+define('LARAVEL_START', microtime(true));
 
-use SmartHeart\App;
-use SmartHeart\Config;
-use SmartHeart\Http\Request;
-use SmartHeart\Infra\Secrets;
+// Determine if the application is in maintenance mode...
+if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php')) {
+    require $maintenance;
+}
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+// Register the Composer autoloader...
+require __DIR__.'/../vendor/autoload.php';
 
-$env = dirname(__DIR__) . '/.env';
-App::kernel(Config::fromEnvironment($env), Secrets::fromEnvironment($env))
-    ->handle(Request::fromGlobals(App::BASE_PATH))
-    ->send();
+// Bootstrap Laravel and handle the request...
+/** @var Application $app */
+$app = require_once __DIR__.'/../bootstrap/app.php';
+
+$app->handleRequest(Request::capture());

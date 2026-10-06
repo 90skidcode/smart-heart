@@ -1,76 +1,159 @@
 # SMART-HEART · Smart Heart Idhayam
 
-Software for the SMART-HEART randomised trial of digital cardiac rehabilitation after PCI (Sri Ramachandra Medical Centre, 240 participants, 1:1). One REST API serves three clients:
+> **Stack (decided 6 Oct 2026):** Laravel 13 API + Vite React admin. The earlier core-PHP API is kept for reference
+> in `archive/core-php-api/` (case-number sign-in, MFA and calculation test vectors to port later).
+> Built admin assets are not committed: run `npm run build` in `apps/admin/` (outputs to `apps/api/public/admin`).
 
-| Client | Users | Stack | Status |
-|---|---|---|---|
-| eCRF + Admin | Study staff: screening, baseline, PROs, safety, randomisation | Vite + React (web) | Not started |
-| Clinician Monitoring Portal | Clinicians, intervention arm | Same web app | Not started |
-| SHI participant app | Intervention-arm participants and caregivers | React Native (Expo), **Android first** | Not started. Health Connect proof of concept in `~/tracker` |
-| **API** | All of the above | Core PHP 8.5 + MySQL 8.4 LTS | **Foundation + sign-in in place** |
-
-**The one rule:** every score, eligibility decision, rehab phase and heart-rate zone is computed on the server by versioned functions that pass the shared test vectors. Clients only display results. See [docs/calculation-specification.md](docs/calculation-specification.md).
-
-## Layout
+Admin system for the SMART-HEART trial at Sri Ramachandra Medical Centre: staff sign-in, roles matrix, audit trail, and the eCRF from registration to consent (REG-01 → SCR-01 → CON-01).
 
 ```
-apps/api/                 PHP API (composer project)
-  public/index.php        front controller, base path /api/v1
-  bin/migrate.php         applies db/migrations
-  src/Calc/Calc.php       reference calculation engines (102 vectors)
-  src/Auth/CaseNumber.php participant sign-in credential
-  src/Http/               router, request/response, problem+json errors
-  src/Infra/              config, database, migrations
-  tests/Unit, Integration PHPUnit
-  tests/scripts/          vector suites (calc, case number, DB lifecycle)
-db/migrations/            0001_baseline.sql = the full schema; 0002_auth.sql = lockout, MFA, permissions, audit chain head
-packages/contracts/       openapi.yaml, test_vectors.json, caseNumber.ts (shared with web and mobile)
-docs/                     calculation spec, API reference, design mockups
+apps/api/      Laravel 13 (PHP 8.3+) — API, database, eCRF rules. Serves the admin panel at /admin
+apps/admin/    React + Vite source for the admin panel (npm run build → apps/api/public/admin)
+docs/          calculation specification, design mockups
+archive/       earlier core-PHP API (reference only)
 ```
 
-## Local setup (macOS, Homebrew)
+---
 
-```bash
-brew install php mysql@8.4 composer
-brew services start mysql@8.4
+## 1. What Phase 1 does
 
-cd apps/api
-cp .env.example .env        # root over /tmp/mysql.sock by default
-php bin/generate-secrets.php >> .env   # local keys only
-composer install
-composer migrate            # creates and migrates smart_heart
-php bin/create-user.php --email=you@example.in --name="Your Name" --site=SRMC \
-    --site-name="Sri Ramachandra Medical Centre" --roles=pi   # asks for a password
-composer serve              # http://localhost:8080/api/v1/health
-```
-
-## Secrets
-
-Servers read keys from environment variables, never from files in the repository: `JWT_SIGNING_KEY`,
-`CASE_NUMBER_PEPPER_<n>`, `DATA_ENCRYPTION_KEY` and their ids (see `apps/api/src/Infra/Secrets.php`, which also
-explains rotation). Generate a separate set per environment with `php bin/generate-secrets.php`. The app refuses
-to start if a key is missing or shorter than 32 bytes. Losing `CASE_NUMBER_PEPPER_*` makes every issued case
-number unusable, and losing `DATA_ENCRYPTION_KEY` makes encrypted columns unreadable: back them up securely.
-
-## What the API does so far
-
-| Area | Endpoints |
+| Area | Behaviour |
 |---|---|
-| System | `GET /health` |
-| Staff sign-in | `POST /auth/login`, `/auth/mfa/verify`, `/auth/mfa/enroll`, `/auth/mfa/confirm`, `/auth/reauth`, `GET /auth/me` |
-| Sessions (all users) | `POST /auth/refresh`, `/auth/logout` |
-| Participant / caregiver sign-in | `POST /app/auth/login` (case number) |
-| App access (staff) | `GET/POST /participants/{id}/case-numbers`, `…/{credentialId}/revoke`, `…/{credentialId}/sign-out` |
+| **Sign-in** | Email + password. 5 wrong passwords lock the account for 15 min. Auto sign-out after 15 min idle (warning at 14). New users get a temporary password and must change it. Passwords: ≥ 10 characters, letters + numbers, must not contain the email name. |
+| **Roles matrix** | Admin sets **read / write per screen** for each role (Administration → Roles & permissions). Starts with three roles: Technical Admin, PI / Research Coordinator, Cardiologist (view-only). The system admin role can never lose Users, Roles or Audit access, so nobody gets locked out. |
+| **REG-01** | Identity (name, mobile, hospital no., address) + referral. Generates **SMART-HEART-0001** and **SCR-0001**. Warns on duplicate hospital numbers. |
+| **SCR-01** | All 8 screens from the eCRF prototype. **Eligibility is calculated live** as fields are entered (4 inclusion, 11 exclusion criteria). Age and days-since-PCI are computed, never typed. "Unknown" answers keep eligibility *pending*, which blocks signing. Once any exclusion is found, the form can be completed and signed immediately as a screen failure. |
+| **CON-01** | Consent record (date/time, PIS version, language, signature or thumb impression + witness, caregiver-view agreement). Opens only after SCR-01 is **signed as ELIGIBLE**. |
+| **Form workflow** | In progress → Complete → **PI signed (locked)**. Out-of-range values (e.g. SBP > 250) need a confirmation reason. After a form is complete, **every change needs a reason**. Signing needs the PI's password and stores name, time and the declaration text. Unlocking needs a reason and a new signature; a form can't be unlocked while a later signed form depends on it. |
+| **Audit trail** | Every sign-in, field change (old → new + reason), signature, unlock, export, user and permission change. Cannot be edited or deleted. Filter by participant, action, form, dates; download as CSV. |
+| **Dashboard** | Counts, enrolment flow for CONSORT, screen-failure reasons, participant list with **arm filter** (All / Intervention / Control / Not randomised), status filter and search. |
+| **Export** | De-identified CSV (no name, mobile, hospital no., address, DOB, consent-taker/witness names) with optional **A/B arm coding**, identified CSV (separate permission), and a **data dictionary**. Every download is logged. |
+| **Backup** | `php artisan shi:backup` — encrypted (AES-256) daily backup at 01:30 IST, kept 30 days; `shi:restore` restores one. |
 
-## Tests
+Field codes match `SMART_HEART_eCRF.html` style (e.g. `SCR_LVEF`, `SCR_EGFR`, `ELIG_STATUS`, `INC_PCI`, `EXC_UNCONTROLLED_HTN`). The data dictionary export lists all of them.
 
+### Eligibility rules as built
+Inclusion: age ≥ 18 · ACS or stable IHD (ACS needs a subtype) · PCI done ≤ 30 days before screening · smartphone access **on Android**.
+Exclusion: CABG · LVEF < 40 % · cardiac arrest · complex ventricular arrhythmia · cardiogenic shock · diabetic retinopathy / neuropathy / foot ulcer · eGFR < 45 · SBP ≥ 160 or DBP ≥ 100 · visual/hearing impairment that prevents safe app use · cognitive impairment that prevents safe app use (impairment manageable with aids or a caregiver does **not** exclude).
+
+To change a threshold: `apps/api/app/Forms/EligibilityEngine.php` (constants at the top). To change fields or ranges: `apps/api/app/Forms/Definitions/*.php`.
+
+---
+
+## 2. Deploy on HostingRaja (shared hosting, cPanel)
+
+**Requirements:** PHP **8.3 or newer** (choose 8.3 or 8.4 in cPanel → *Select PHP Version*), MySQL, SSL certificate, cron jobs. PHP extensions: `pdo_mysql`, `mbstring`, `openssl`, `json`, `zlib`, `fileinfo`, `tokenizer`, `ctype`.
+
+### Step 1 — Build on your own computer
+Shared hosting usually has no Composer or Node, so do this once on a laptop with PHP 8.3+, Composer and Node 20+:
 ```bash
-composer test       # unit tests, 102 calculation vectors, case-number tests, TypeScript cross-check (needs Node 22.18+)
-composer test:db    # needs MySQL: migrations, triggers, health, case-number lifecycle (uses smart_heart_test)
+cd apps/admin && npm install && npm run build   # builds the admin panel into apps/api/public/admin
+cd ../api
+composer install --no-dev --optimize-autoloader
 ```
+This creates `apps/api/vendor/` and `apps/api/public/admin/`.
 
-`composer test:vectors` rewrites `packages/contracts/test_vectors.json`. Commit it when a vector changes; the web and mobile teams test their display code against it.
+### Step 2 — Create the database
+cPanel → **MySQL Databases**: create a database (e.g. `user_smartheart`) and a user with a strong password; add the user to the database with **ALL PRIVILEGES**.
 
-## Migrations
+### Step 3 — Upload
+Zip the whole `apps/api` folder (including `vendor/` and `public/admin/`) and upload it with cPanel → **File Manager** to your home folder, *outside* `public_html`, e.g. `/home/USER/smartheart/`. Extract it there.
 
-Add `db/migrations/NNNN_description.sql`; never edit a migration that has been applied (the runner checks a checksum and stops). `DELIMITER` lines are supported for triggers. MySQL cannot roll back DDL, so a failed migration names the statement and must be repaired by hand. `php bin/migrate.php --fresh` drops and rebuilds the database and is refused when `APP_ENV=production`.
+### Step 4 — Point the web address at the `public` folder
+- **Best:** create a subdomain (e.g. `ecrf.yourdomain.in`) in cPanel → **Domains/Subdomains** and set its **document root** to `/home/USER/smartheart/public`.
+- **If you can't change the document root:** copy everything inside `smartheart/public/` into the subdomain's folder, then edit that copy of `index.php` and change the two paths `__DIR__.'/../vendor/autoload.php'` and `__DIR__.'/../bootstrap/app.php'` to `'/home/USER/smartheart/vendor/autoload.php'` and `'/home/USER/smartheart/bootstrap/app.php'`.
+
+Turn on **SSL** (cPanel → SSL/TLS Status → AutoSSL) and make sure the site opens with `https://`.
+
+### Step 5 — Configure `.env`
+In File Manager, copy `.env.example` to `.env` and fill in:
+```
+APP_URL=https://ecrf.yourdomain.in
+DB_DATABASE=user_smartheart
+DB_USERNAME=user_shi
+DB_PASSWORD=...
+BACKUP_KEY=           # see below
+SEED_ADMIN_EMAIL=you@srmc...    # first administrator
+SEED_ADMIN_PASSWORD=            # leave blank to get a random one printed
+STUDY_ID_START=1      # set higher if paper CRFs already used numbers
+```
+`APP_KEY` and `BACKUP_KEY` are generated in the next step. **Save a copy of `BACKUP_KEY` somewhere off the server** (e.g. the PI's password manager). Without it, backups cannot be opened.
+
+### Step 6 — Set up the database
+If cPanel has **Terminal** (or SSH):
+```bash
+cd ~/smartheart
+php artisan key:generate --force
+php -r "echo 'BACKUP_KEY=', base64_encode(random_bytes(32)), PHP_EOL;"   # paste into .env
+php artisan migrate --force
+php artisan db:seed --force          # creates roles + first admin, prints password if blank
+php artisan config:cache
+php artisan route:cache
+```
+No terminal? Run the same commands on your laptop against the server database (if remote MySQL is allowed), or ask HostingRaja support to run them once.
+
+Folders `storage/` and `bootstrap/cache/` must be writable (permission 755, or 775 if needed).
+
+### Step 7 — Cron job (backups and session clean-up)
+cPanel → **Cron Jobs** → every 5 minutes:
+```
+*/5 * * * * /usr/local/bin/php /home/USER/smartheart/artisan schedule:run >> /dev/null 2>&1
+```
+(Check the PHP path in cPanel; it may be `/opt/cpanel/ea-php83/root/usr/bin/php`.)
+
+### Step 8 — First sign-in
+Open `https://ecrf.yourdomain.in/admin/`, sign in as the admin, change the password, then **Users → Add user** for the PI and the cardiologist. Each gets a one-time temporary password.
+
+### Step 9 — Check before the first participant
+- [ ] Sign in as the PI, register a **test** participant, complete SCR-01, sign it, check the audit trail.
+- [ ] Download a de-identified export and confirm no names appear.
+- [ ] Next morning, check that `storage/app/backups/` has a new `.enc` file.
+- [ ] Copy one backup off the server (File Manager → Download) and keep it with the `BACKUP_KEY`.
+- [ ] Remove the test participant's data by restoring an empty database: `php artisan migrate:fresh --force && php artisan db:seed --force` (do this **before** real enrolment only).
+
+---
+
+## 3. Backups and restore test (monthly)
+```bash
+php artisan shi:backup                                   # make one now
+php artisan shi:backup --decrypt=storage/app/backups/shi_YYYYmmdd_HHMMSS.json.gz.enc
+# On a SEPARATE test database only:
+php artisan migrate:fresh --force
+php artisan shi:restore storage/app/backups/shi_YYYYmmdd_HHMMSS.json.gz
+```
+Download backups regularly from `storage/app/backups/` to a hospital computer; the server copy alone is not enough.
+
+---
+
+## 4. Local development
+```bash
+# API
+cd apps/api && composer install && cp .env.example .env
+# in .env: DB_CONNECTION=sqlite, DB_DATABASE=/full/path/to/apps/api/database/database.sqlite, APP_ENV=local, APP_DEBUG=true
+touch database/database.sqlite
+php artisan key:generate && php artisan migrate --seed
+php artisan serve                       # http://127.0.0.1:8000
+
+# Admin panel (hot reload, proxies /api to :8000)
+cd apps/admin && npm install && npm run dev  # http://localhost:5173/admin/
+npm run build                           # rebuilds into apps/api/public/admin
+```
+Tests: `cd apps/api && php artisan test` (17 tests: eligibility rules, gating, signing, unlock order, reason-for-change, audit immutability, permissions, lockout, de-identified export).
+
+---
+
+## 5. Settings in `apps/api/config/smartheart.php` / `.env`
+| Setting | Default |
+|---|---|
+| `SESSION_IDLE_MINUTES` | 15 |
+| `LOGIN_LOCKOUT_ATTEMPTS` / `_MINUTES` | 5 / 15 |
+| `STUDY_ID_START` | 1 |
+| `ARM_CODE_INTERVENTION` / `_CONTROL` | A / B |
+| `BACKUP_KEEP_DAYS` | 30 |
+| Reasons for change list | `change_reasons` in the config file |
+| Signature declaration text | `signature_meanings` in the config file |
+
+---
+
+## 6. Not in Phase 1 (next)
+BL-01 baseline modules · PRO-01 tablet self-entry (DHRx, PHQ-9, GAD-7, EQ-5D-5L, DASI, MARS-5) · SAF-01 · RAND-01 · FU-01 · AE/MACE/withdrawal · intervention monitoring dashboard · control-arm web links · mobile app (React Native, Health Connect, Firebase OTP).

@@ -1,13 +1,19 @@
 .DS_Store
 .idea/
 .vscode/
+node_modules/
 
-# API
+# Laravel API
 apps/api/vendor/
 apps/api/.env
+apps/api/database/*.sqlite
+apps/api/storage/app/backups/
+apps/api/.phpunit.result.cache
 apps/api/.phpunit.cache/
 
-# Regenerated with random numbers on every test run
-packages/contracts/case-number/case_number_vectors.json
+# Built admin panel (npm run build in apps/admin)
+apps/api/public/admin/
 
-node_modules/
+# Archived core-PHP API
+archive/core-php-api/api/vendor/
+archive/core-php-api/api/.env
